@@ -83,7 +83,7 @@ set(BASE_INCLUDE_PLATFORM_DIRECTORIES)
 set(BASE_INCLUDE_DIRECTORIES
     .
     ..
-    ../third_party/abseil-cpp
+    ./third_party/abseil-cpp
     ./third_party/boringssl/src/include
 )
 
