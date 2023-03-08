@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,10 +12,11 @@
 #include <sys/time.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <memory>
 
-#include "base/allocator/buildflags.h"
 #include "base/allocator/partition_allocator/partition_alloc_base/logging.h"
 #include "base/allocator/partition_allocator/partition_alloc_base/threading/platform_thread_internal_posix.h"
+#include "base/allocator/partition_allocator/partition_alloc_buildflags.h"
 #include "base/allocator/partition_allocator/partition_alloc_check.h"
 #include "build/build_config.h"
 
@@ -25,7 +26,7 @@
 #include <sys/resource.h>
 #endif
 
-#if BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+#if BUILDFLAG(ENABLE_PARTITION_ALLOC_AS_MALLOC_SUPPORT)
 #include "base/allocator/partition_allocator/starscan/pcscan.h"
 #include "base/allocator/partition_allocator/starscan/stack/stack.h"
 #endif
@@ -52,7 +53,7 @@ void* ThreadFunc(void* params) {
     delegate = thread_params->delegate;
 
 #if !BUILDFLAG(IS_NACL)
-#if BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+#if BUILDFLAG(ENABLE_PARTITION_ALLOC_AS_MALLOC_SUPPORT)
     PCScan::NotifyThreadCreated(GetStackPointer());
 #endif
 #endif
@@ -60,7 +61,7 @@ void* ThreadFunc(void* params) {
 
   delegate->ThreadMain();
 
-#if !BUILDFLAG(IS_NACL) && BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+#if !BUILDFLAG(IS_NACL) && BUILDFLAG(ENABLE_PARTITION_ALLOC_AS_MALLOC_SUPPORT)
   PCScan::NotifyThreadDestroyed();
 #endif
 

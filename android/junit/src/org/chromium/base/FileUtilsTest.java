@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,8 +9,6 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
-import android.annotation.NonNull;
-import android.annotation.Nullable;
 import android.content.ContentProvider;
 import android.content.ContentValues;
 import android.content.Context;
@@ -52,6 +50,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.function.Function;
 
 /** Unit tests for {@link Log}. */
 @RunWith(BaseRobolectricTestRunner.class)
@@ -468,8 +467,7 @@ public class FileUtilsTest {
         }
 
         @Override
-        public @Nullable ParcelFileDescriptor openFile(@NonNull Uri uri, @NonNull String mode)
-                throws FileNotFoundException {
+        public ParcelFileDescriptor openFile(Uri uri, String mode) throws FileNotFoundException {
             String uriString = uri.toString();
             if (mUriToFilename.containsKey(uriString)) {
                 String filename = mUriToFilename.get(uriString);

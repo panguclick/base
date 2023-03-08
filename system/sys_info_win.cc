@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,11 +8,17 @@
 #include <stdint.h>
 #include <windows.h>
 
+#include <algorithm>
+#include <bit>
 #include <limits>
+#include <type_traits>
+#include <vector>
 
 #include "base/check.h"
+#include "base/containers/stack_container.h"
 #include "base/files/file_path.h"
 #include "base/notreached.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/process/process_metrics.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -24,7 +30,84 @@
 
 namespace {
 
-int64_t AmountOfMemory(DWORDLONG MEMORYSTATUSEX::*memory_field) {
+// Returns the power efficiency levels of physical cores or empty vector on
+// failure. The BYTE value of the element is the relative efficiency rank among
+// all physical cores, where 0 is the most efficient, 1 is the second most
+// efficient, and so on.
+std::vector<BYTE> GetCoreEfficiencyClasses() {
+  const DWORD kReservedSize =
+      sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX) * 64;
+  base::StackVector<BYTE, kReservedSize> buffer;
+  buffer->resize(kReservedSize);
+  DWORD byte_length = kReservedSize;
+  if (!GetLogicalProcessorInformationEx(
+          RelationProcessorCore,
+          reinterpret_cast<SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX*>(
+              buffer->data()),
+          &byte_length)) {
+    DPCHECK(GetLastError() == ERROR_INSUFFICIENT_BUFFER);
+    buffer->resize(byte_length);
+    if (!GetLogicalProcessorInformationEx(
+            RelationProcessorCore,
+            reinterpret_cast<SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX*>(
+                buffer->data()),
+            &byte_length)) {
+      return {};
+    }
+  }
+
+  std::vector<BYTE> efficiency_classes;
+  BYTE* byte_ptr = buffer->data();
+  while (byte_ptr < buffer->data() + byte_length) {
+    const auto* structure_ptr =
+        reinterpret_cast<SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX*>(byte_ptr);
+    DCHECK_EQ(structure_ptr->Relationship, RelationProcessorCore);
+    DCHECK_LE(&structure_ptr->Processor.EfficiencyClass +
+                  sizeof(structure_ptr->Processor.EfficiencyClass),
+              buffer->data() + byte_length);
+    efficiency_classes.push_back(structure_ptr->Processor.EfficiencyClass);
+    DCHECK_GE(
+        structure_ptr->Size,
+        offsetof(std::remove_pointer_t<decltype(structure_ptr)>, Processor) +
+            sizeof(structure_ptr->Processor));
+    byte_ptr = byte_ptr + structure_ptr->Size;
+  }
+
+  return efficiency_classes;
+}
+
+// Returns the physical cores to logical processor mapping masks by using the
+// Windows API GetLogicalProcessorInformation(), or an empty vector on failure.
+// When succeeded, the vector would be of same size to the number of physical
+// cores, while each element is the bitmask of the logical processors that the
+// physical core has.
+std::vector<uint64_t> GetCoreProcessorMasks() {
+  const DWORD kReservedSize = 64;
+  base::StackVector<SYSTEM_LOGICAL_PROCESSOR_INFORMATION, kReservedSize> buffer;
+  buffer->resize(kReservedSize);
+  DWORD byte_length = sizeof(buffer[0]) * kReservedSize;
+  const BOOL result =
+      GetLogicalProcessorInformation(buffer->data(), &byte_length);
+  DWORD element_count = byte_length / sizeof(buffer[0]);
+  DCHECK_EQ(byte_length % sizeof(buffer[0]), 0u);
+  if (!result) {
+    DPCHECK(GetLastError() == ERROR_INSUFFICIENT_BUFFER);
+    buffer->resize(element_count);
+    if (!GetLogicalProcessorInformation(buffer->data(), &byte_length))
+      return {};
+  }
+
+  std::vector<uint64_t> processor_masks;
+  for (DWORD i = 0; i < element_count; i++) {
+    if (buffer[i].Relationship == RelationProcessorCore) {
+      processor_masks.push_back(buffer[i].ProcessorMask);
+    }
+  }
+
+  return processor_masks;
+}
+
+uint64_t AmountOfMemory(DWORDLONG MEMORYSTATUSEX::*memory_field) {
   MEMORYSTATUSEX memory_info;
   memory_info.dwLength = sizeof(memory_info);
   if (!GlobalMemoryStatusEx(&memory_info)) {
@@ -32,8 +115,7 @@ int64_t AmountOfMemory(DWORDLONG MEMORYSTATUSEX::*memory_field) {
     return 0;
   }
 
-  int64_t rv = static_cast<int64_t>(memory_info.*memory_field);
-  return rv < 0 ? std::numeric_limits<int64_t>::max() : rv;
+  return memory_info.*memory_field;
 }
 
 bool GetDiskSpaceInfo(const base::FilePath& path,
@@ -68,20 +150,46 @@ int SysInfo::NumberOfProcessors() {
 }
 
 // static
-int64_t SysInfo::AmountOfPhysicalMemoryImpl() {
+int SysInfo::NumberOfEfficientProcessorsImpl() {
+  std::vector<BYTE> efficiency_classes = GetCoreEfficiencyClasses();
+  if (efficiency_classes.empty())
+    return 0;
+
+  auto [min_efficiency_class_it, max_efficiency_class_it] =
+      std::minmax_element(efficiency_classes.begin(), efficiency_classes.end());
+  if (*min_efficiency_class_it == *max_efficiency_class_it)
+    return 0;
+
+  std::vector<uint64_t> processor_masks = GetCoreProcessorMasks();
+  if (processor_masks.empty())
+    return 0;
+
+  DCHECK_EQ(efficiency_classes.size(), processor_masks.size());
+  int num_of_efficient_processors = 0;
+  for (size_t i = 0; i < efficiency_classes.size(); i++) {
+    if (efficiency_classes[i] == *min_efficiency_class_it) {
+      num_of_efficient_processors += std::_Popcount(processor_masks[i]);
+    }
+  }
+
+  return num_of_efficient_processors;
+}
+
+// static
+uint64_t SysInfo::AmountOfPhysicalMemoryImpl() {
   return AmountOfMemory(&MEMORYSTATUSEX::ullTotalPhys);
 }
 
 // static
-int64_t SysInfo::AmountOfAvailablePhysicalMemoryImpl() {
+uint64_t SysInfo::AmountOfAvailablePhysicalMemoryImpl() {
   SystemMemoryInfoKB info;
   if (!GetSystemMemoryInfo(&info))
     return 0;
-  return static_cast<int64_t>(info.avail_phys) * 1024;
+  return checked_cast<uint64_t>(info.avail_phys) * 1024;
 }
 
 // static
-int64_t SysInfo::AmountOfVirtualMemory() {
+uint64_t SysInfo::AmountOfVirtualMemory() {
   return AmountOfMemory(&MEMORYSTATUSEX::ullTotalVirtual);
 }
 
@@ -162,8 +270,8 @@ void SysInfo::OperatingSystemVersionNumbers(int32_t* major_version,
                                             int32_t* minor_version,
                                             int32_t* bugfix_version) {
   win::OSInfo* os_info = win::OSInfo::GetInstance();
-  *major_version = os_info->version_number().major;
-  *minor_version = os_info->version_number().minor;
+  *major_version = static_cast<int32_t>(os_info->version_number().major);
+  *minor_version = static_cast<int32_t>(os_info->version_number().minor);
   *bugfix_version = 0;
 }
 

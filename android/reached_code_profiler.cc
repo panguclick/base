@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -166,7 +166,8 @@ class ReachedCodeProfiler {
     // Start the interval timer.
     struct itimerspec its;
     memset(&its, 0, sizeof(its));
-    its.it_interval.tv_nsec = sampling_interval.InNanoseconds();
+    its.it_interval.tv_nsec =
+        checked_cast<long>(sampling_interval.InNanoseconds());
     its.it_value = its.it_interval;
     ret = timer_settime(timerid, 0, &its, nullptr);
     if (ret) {
@@ -239,9 +240,8 @@ class ReachedCodeProfiler {
 
     dumping_thread_ =
         std::make_unique<base::Thread>("ReachedCodeProfilerDumpingThread");
-    base::Thread::Options options;
-    options.priority = base::ThreadPriority::BACKGROUND;
-    dumping_thread_->StartWithOptions(std::move(options));
+    dumping_thread_->StartWithOptions(
+        base::Thread::Options(base::ThreadType::kBackground));
     dumping_thread_->task_runner()->PostDelayedTask(
         FROM_HERE,
         base::BindOnce(&DumpToFile, file_path, dumping_thread_->task_runner()),

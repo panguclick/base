@@ -1,13 +1,13 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "base/metrics/persistent_histogram_allocator.h"
 
+#include <atomic>
 #include <limits>
 #include <utility>
 
-#include "base/atomicops.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/important_file_writer.h"
@@ -101,7 +101,8 @@ size_t CalculateRequiredCountsBytes(size_t bucket_count) {
 
 }  // namespace
 
-const Feature kPersistentHistogramsFeature{
+BASE_FEATURE(
+    kPersistentHistogramsFeature,
     "PersistentHistograms",
 #if BUILDFLAG(IS_FUCHSIA)
     // TODO(crbug.com/1295119): Enable once writable mmap() is supported.
@@ -109,7 +110,7 @@ const Feature kPersistentHistogramsFeature{
 #else
     FEATURE_ENABLED_BY_DEFAULT
 #endif  // BUILDFLAG(IS_FUCHSIA)
-};
+);
 
 PersistentSparseHistogramDataManager::PersistentSparseHistogramDataManager(
     PersistentMemoryAllocator* allocator)
@@ -254,7 +255,7 @@ struct PersistentHistogramAllocator::PersistentHistogramData {
   uint32_t bucket_count;
   PersistentMemoryAllocator::Reference ranges_ref;
   uint32_t ranges_checksum;
-  subtle::Atomic32 counts_ref;  // PersistentMemoryAllocator::Reference
+  std::atomic<PersistentMemoryAllocator::Reference> counts_ref;
   HistogramSamples::Metadata samples_metadata;
   HistogramSamples::Metadata logged_metadata;
 
@@ -573,7 +574,7 @@ std::unique_ptr<HistogramBase> PersistentHistogramAllocator::CreateHistogram(
 
   size_t counts_bytes = CalculateRequiredCountsBytes(histogram_bucket_count);
   PersistentMemoryAllocator::Reference counts_ref =
-      subtle::Acquire_Load(&histogram_data_ptr->counts_ref);
+      histogram_data_ptr->counts_ref.load(std::memory_order_acquire);
   if (counts_bytes == 0 ||
       (counts_ref != 0 &&
        memory_allocator_->GetAllocSize(counts_ref) < counts_bytes)) {
@@ -879,7 +880,7 @@ void GlobalHistogramAllocator::Set(
   // also released, future accesses to those histograms will seg-fault.
   CHECK(!subtle::NoBarrier_Load(&g_histogram_allocator));
   subtle::Release_Store(&g_histogram_allocator,
-                        reinterpret_cast<uintptr_t>(allocator.release()));
+                        reinterpret_cast<intptr_t>(allocator.release()));
   size_t existing = StatisticsRecorder::GetHistogramCount();
 
   DVLOG_IF(1, existing)

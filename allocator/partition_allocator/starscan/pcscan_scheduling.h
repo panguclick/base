@@ -1,4 +1,4 @@
-// Copyright (c) 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -197,15 +197,5 @@ bool PCScanScheduler::AccountFreed(size_t size) {
 }
 
 }  // namespace partition_alloc::internal
-
-// TODO(crbug.com/1288247): Remove these when migration is complete.
-namespace base::internal {
-
-using ::partition_alloc::internal::LimitBackend;
-using ::partition_alloc::internal::MUAwareTaskBasedBackend;
-using ::partition_alloc::internal::PCScanScheduler;
-using ::partition_alloc::internal::QuarantineData;
-
-}  // namespace base::internal
 
 #endif  // BASE_ALLOCATOR_PARTITION_ALLOCATOR_STARSCAN_PCSCAN_SCHEDULING_H_

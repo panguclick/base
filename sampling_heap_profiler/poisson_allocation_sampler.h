@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -191,11 +191,11 @@ class BASE_EXPORT PoissonAllocationSampler {
 
   static PoissonAllocationSampler* instance_;
 
-  // friend class heap_profiling::HeapProfilerControllerTest;
+  friend class heap_profiling::HeapProfilerControllerTest;
   friend class NoDestructor<PoissonAllocationSampler>;
-  // friend class SamplingHeapProfilerTest;
-  // FRIEND_TEST_ALL_PREFIXES(PoissonAllocationSamplerTest, MuteHooksWithoutInit);
-  // FRIEND_TEST_ALL_PREFIXES(SamplingHeapProfilerTest, HookedAllocatorMuted);
+  friend class SamplingHeapProfilerTest;
+  FRIEND_TEST_ALL_PREFIXES(PoissonAllocationSamplerTest, MuteHooksWithoutInit);
+  FRIEND_TEST_ALL_PREFIXES(SamplingHeapProfilerTest, HookedAllocatorMuted);
 };
 
 // static

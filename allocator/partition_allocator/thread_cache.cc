@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,10 +10,12 @@
 #include <atomic>
 #include <cstdint>
 
-#include "base/allocator/buildflags.h"
+#include "base/allocator/partition_allocator/partition_alloc-inl.h"
 #include "base/allocator/partition_allocator/partition_alloc_base/component_export.h"
 #include "base/allocator/partition_allocator/partition_alloc_base/cxx17_backports.h"
+#include "base/allocator/partition_allocator/partition_alloc_base/debug/debugging_buildflags.h"
 #include "base/allocator/partition_allocator/partition_alloc_base/immediate_crash.h"
+#include "base/allocator/partition_allocator/partition_alloc_buildflags.h"
 #include "base/allocator/partition_allocator/partition_alloc_check.h"
 #include "base/allocator/partition_allocator/partition_alloc_config.h"
 #include "base/allocator/partition_allocator/partition_alloc_constants.h"
@@ -422,7 +424,9 @@ void ThreadCache::SetLargestCachedSize(size_t size) {
   if (size > ThreadCache::kLargeSizeThreshold)
     size = ThreadCache::kLargeSizeThreshold;
   largest_active_bucket_index_ =
-      PartitionRoot<internal::ThreadSafe>::SizeToBucketIndex(size, false);
+      PartitionRoot<internal::ThreadSafe>::SizeToBucketIndex(
+          size,
+          PartitionRoot<internal::ThreadSafe>::BucketDistribution::kCoarser);
   PA_CHECK(largest_active_bucket_index_ < kBucketCount);
   ThreadCacheRegistry::Instance().SetLargestActiveBucketIndex(
       largest_active_bucket_index_);
@@ -445,13 +449,14 @@ ThreadCache* ThreadCache::Create(PartitionRoot<internal::ThreadSafe>* root) {
   size_t usable_size;
   bool already_zeroed;
 
-  auto* bucket = root->buckets +
-                 PartitionRoot<internal::ThreadSafe>::SizeToBucketIndex(
-                     raw_size, root->flags.with_denser_bucket_distribution);
+  auto* bucket =
+      root->buckets + PartitionRoot<internal::ThreadSafe>::SizeToBucketIndex(
+                          raw_size, root->GetBucketDistribution());
   uintptr_t buffer = root->RawAlloc(bucket, AllocFlags::kZeroFill, raw_size,
                                     internal::PartitionPageSize(), &usable_size,
                                     &already_zeroed);
-  ThreadCache* tcache = new (reinterpret_cast<void*>(buffer)) ThreadCache(root);
+  ThreadCache* tcache =
+      new (internal::SlotStartAddr2Ptr(buffer)) ThreadCache(root);
 
   // This may allocate.
   internal::PartitionTlsSet(internal::g_thread_cache_key, tcache);
@@ -518,11 +523,15 @@ void ThreadCache::Delete(void* tcache_ptr) {
 
   auto* root = tcache->root_;
   tcache->~ThreadCache();
-  root->RawFree(reinterpret_cast<uintptr_t>(tcache_ptr));
+  // TreadCache was allocated using RawAlloc() and SlotStartAddr2Ptr(), so it
+  // shifted by extras, but is MTE-tagged.
+  root->RawFree(internal::SlotStartPtr2Addr(tcache_ptr));
 
 #if BUILDFLAG(IS_WIN)
   // On Windows, allocations do occur during thread/process teardown, make sure
   // they don't resurrect the thread cache.
+  //
+  // Don't MTE-tag, as it'd mess with the sentinel value.
   //
   // TODO(lizeb): Investigate whether this is needed on POSIX as well.
   internal::PartitionTlsSet(internal::g_thread_cache_key,
@@ -678,7 +687,7 @@ void ThreadCache::FreeAfter(internal::PartitionFreelistEntry* head,
   // acquisitions can be expensive.
   internal::ScopedGuard guard(root_->lock_);
   while (head) {
-    uintptr_t slot_start = reinterpret_cast<uintptr_t>(head);
+    uintptr_t slot_start = internal::SlotStartPtr2Addr(head);
     head = head->GetNextForThreadCache<crash_on_corruption>(slot_size);
     root_->RawFreeLocked(slot_start);
   }
@@ -764,6 +773,10 @@ void ThreadCache::PurgeCurrentThread() {
 
 void ThreadCache::PurgeInternal() {
   PurgeInternalHelper<true>();
+}
+
+void ThreadCache::ResetPerThreadAllocationStatsForTesting() {
+  thread_alloc_stats_ = {};
 }
 
 template <bool crash_on_corruption>

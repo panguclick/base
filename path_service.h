@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -78,9 +78,7 @@ class BASE_EXPORT PathService {
 
  private:
   friend class ScopedPathOverride;
-  //delete by kingkong
-  //FRIEND_TEST_ALL_PREFIXES(PathServiceTest, RemoveOverride);
-  //end
+  FRIEND_TEST_ALL_PREFIXES(PathServiceTest, RemoveOverride);
 
   // Removes an override for a special directory or file. Returns true if there
   // was an override to remove or false if none was present.

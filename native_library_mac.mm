@@ -1,4 +1,4 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -65,10 +65,8 @@ NativeLibrary LoadNativeLibraryWithOptions(const FilePath& library_path,
     return native_lib;
   }
   ScopedCFTypeRef<CFURLRef> url(CFURLCreateFromFileSystemRepresentation(
-      kCFAllocatorDefault,
-      (const UInt8*)library_path.value().c_str(),
-      library_path.value().length(),
-      true));
+      kCFAllocatorDefault, (const UInt8*)library_path.value().c_str(),
+      checked_cast<CFIndex>(library_path.value().length()), true));
   if (!url)
     return nullptr;
   CFBundleRef bundle = CFBundleCreate(kCFAllocatorDefault, url.get());
@@ -78,7 +76,6 @@ NativeLibrary LoadNativeLibraryWithOptions(const FilePath& library_path,
   NativeLibrary native_lib = new NativeLibraryStruct();
   native_lib->type = BUNDLE;
   native_lib->bundle = bundle;
-  native_lib->bundle_resource_ref = CFBundleOpenBundleResourceMap(bundle);
   native_lib->objc_status = OBJC_UNKNOWN;
   return native_lib;
 }
@@ -86,8 +83,6 @@ NativeLibrary LoadNativeLibraryWithOptions(const FilePath& library_path,
 void UnloadNativeLibrary(NativeLibrary library) {
   if (library->objc_status == OBJC_NOT_PRESENT) {
     if (library->type == BUNDLE) {
-      CFBundleCloseBundleResourceMap(library->bundle,
-                                     library->bundle_resource_ref);
       CFRelease(library->bundle);
     } else {
       dlclose(library->dylib);

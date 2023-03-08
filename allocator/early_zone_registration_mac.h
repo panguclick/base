@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,7 +16,15 @@ static constexpr char kPartitionAllocZoneName[] = "PartitionAlloc";
 
 // Zone version. Determines which callbacks are set in the various malloc_zone_t
 // structs.
+#if (__MAC_OS_X_VERSION_MAX_ALLOWED >= 130000) || \
+    (__IPHONE_OS_VERSION_MAX_ALLOWED >= 160100)
+#define PA_TRY_FREE_DEFAULT_IS_AVAILABLE 1
+#endif
+#if PA_TRY_FREE_DEFAULT_IS_AVAILABLE
+constexpr int kZoneVersion = 13;
+#else
 constexpr int kZoneVersion = 9;
+#endif
 
 // Must be called *once*, *before* the process becomes multi-threaded.
 void EarlyMallocZoneRegistration();

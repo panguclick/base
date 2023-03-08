@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -105,7 +105,7 @@ class BASE_EXPORT WorkQueueSets {
  private:
   struct OldestTaskOrder {
     TaskOrder key;
-    WorkQueue* value;
+    raw_ptr<WorkQueue> value;
 
     // Used for a min-heap.
     bool operator>(const OldestTaskOrder& other) const {
@@ -139,7 +139,7 @@ class BASE_EXPORT WorkQueueSets {
 
   // This is for a debugging feature which lets us randomize task selection. Its
   // not for production use.
-  // TODO(alexclarke): Use a seedable PRNG from ::base if one is added.
+  // TODO(crbug.com/1350190): Use a seedable PRNG from ::base if one is added.
   uint64_t Random() const {
     last_rand_ = MurmurHash3(last_rand_);
     return last_rand_;

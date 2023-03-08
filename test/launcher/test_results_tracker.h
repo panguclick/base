@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -105,12 +105,16 @@ class TestResultsTracker {
   TestStatusMap GetTestStatusMapForAllIterations() const;
 
  private:
-  // FRIEND_TEST_ALL_PREFIXES(TestResultsTrackerTest,
-  //                          SaveSummaryAsJSONWithLinkInResult);
-  // FRIEND_TEST_ALL_PREFIXES(TestResultsTrackerTest,
-  //                          SaveSummaryAsJSONWithOutTimestampInResult);
-  // FRIEND_TEST_ALL_PREFIXES(TestResultsTrackerTest,
-  //                          SaveSummaryAsJSONWithTimestampInResult);
+  FRIEND_TEST_ALL_PREFIXES(TestResultsTrackerTest,
+                           SaveSummaryAsJSONWithLinkInResult);
+  FRIEND_TEST_ALL_PREFIXES(TestResultsTrackerTest,
+                           SaveSummaryAsJSONWithTagInResult);
+  FRIEND_TEST_ALL_PREFIXES(TestResultsTrackerTest,
+                           SaveSummaryAsJSONWithPropertyInResult);
+  FRIEND_TEST_ALL_PREFIXES(TestResultsTrackerTest,
+                           SaveSummaryAsJSONWithOutTimestampInResult);
+  FRIEND_TEST_ALL_PREFIXES(TestResultsTrackerTest,
+                           SaveSummaryAsJSONWithTimestampInResult);
   void GetTestStatusForIteration(int iteration, TestStatusMap* map) const;
 
   template<typename InputIterator>

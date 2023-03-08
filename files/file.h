@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -50,7 +50,7 @@ class BASE_EXPORT File {
   // a file.
   // FLAG_(WRITE|APPEND) are mutually exclusive. This is so that APPEND behavior
   // will be consistent with O_APPEND on POSIX.
-  enum Flags {
+  enum Flags : uint32_t {
     FLAG_OPEN = 1 << 0,            // Opens a file, only if it exists.
     FLAG_CREATE = 1 << 1,          // Creates a new file, only if it does not
                                    // already exist.
@@ -209,7 +209,7 @@ class BASE_EXPORT File {
 
   // Simplified versions of Read() and friends (see below) that check the int
   // return value and just return a boolean. They return true if and only if
-  // the function read in / wrote out exactly |size| bytes of data.
+  // the function read in / wrote out exactly |data.size()| bytes of data.
   bool ReadAndCheck(int64_t offset, span<uint8_t> data);
   bool ReadAtCurrentPosAndCheck(span<uint8_t> data);
   bool WriteAndCheck(int64_t offset, span<const uint8_t> data);

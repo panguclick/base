@@ -1,4 +1,4 @@
-// Copyright 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -31,7 +31,7 @@
 namespace base {
 
 #if BUILDFLAG(IS_APPLE)
-extern const Feature kMacAllowBackgroundingProcesses;
+BASE_DECLARE_FEATURE(kMacAllowBackgroundingProcesses);
 #endif
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -39,7 +39,7 @@ extern const Feature kMacAllowBackgroundingProcesses;
 // its own cgroup. This will cause the scheduler to use the aggregate runtime
 // of all threads in the process when deciding on the next thread to schedule.
 // It will help guarantee fairness between renderers.
-BASE_EXPORT extern const Feature kOneGroupPerRenderer;
+BASE_EXPORT BASE_DECLARE_FEATURE(kOneGroupPerRenderer);
 #endif
 
 // Provides a move-only encapsulation of a process.
@@ -229,10 +229,8 @@ class BASE_EXPORT Process {
 #endif
 
 #if BUILDFLAG(IS_CHROMEOS)
-  // Returns true if the 'OneGroupPerRenderer' feature is enabled. The feature
-  // is enabled if the kOneGroupPerRenderer feature flag is enabled and the
-  // system supports the chrome cgroups.
-  static bool OneGroupPerRendererEnabled();
+  // Exposes OneGroupPerRendererEnabled() to unit tests.
+  static bool OneGroupPerRendererEnabledForTesting();
 
   // If OneGroupPerRenderer is enabled, runs at process startup to clean up
   // any stale cgroups that were left behind from any unclean exits of the

@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -37,7 +37,8 @@ class BASE_EXPORT Token {
   constexpr Token& operator=(Token&&) = default;
 
   // Constructs a new Token with random |high| and |low| values taken from a
-  // cryptographically strong random source.
+  // cryptographically strong random source. The result's |is_zero()| is
+  // guaranteed to be false.
   static Token CreateRandom();
 
   // The high and low 64 bits of this Token.

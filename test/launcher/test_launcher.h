@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -221,7 +221,7 @@ class TestLauncher {
   // Creates and starts a ThreadPoolInstance with |num_parallel_jobs| dedicated
   // to foreground blocking tasks (corresponds to the traits used to launch and
   // wait for child processes). virtual to mock in testing.
-  virtual void CreateAndStartThreadPool(int num_parallel_jobs);
+  virtual void CreateAndStartThreadPool(size_t num_parallel_jobs);
 
   // Callback to receive result of a test.
   // |result_file| is a path to xml file written by child process.
@@ -332,6 +332,43 @@ class TestLauncher {
   // 1 if gtest_repeat is not specified or gtest_break_on_failure is specified.
   // Otherwise it matches gtest_repeat value.
   int repeats_per_iteration_ = 1;
+};
+
+// Watch a gtest XML result file for tests run in a batch to complete.
+class ResultWatcher {
+ public:
+  ResultWatcher(FilePath result_file, size_t num_tests);
+
+  // Poll the incomplete result file, blocking until the batch completes or a
+  // test timed out. Returns true iff no tests timed out.
+  bool PollUntilDone(TimeDelta timeout_per_test);
+
+  // Wait and block for up to `timeout` before we poll the result file again.
+  // Returns true iff we should stop polling the results early.
+  virtual bool WaitWithTimeout(TimeDelta timeout) = 0;
+
+ private:
+  // Read the results, check if a timeout occurred, and then return how long
+  // the polling loop should wait for. A nonpositive return value indicates a
+  // timeout (i.e., the next check is overdue).
+  //
+  // If a timeout did not occur, this method tries to schedule the next check
+  // for `timeout_per_test` since the last test completed.
+  TimeDelta PollOnce(TimeDelta timeout_per_test);
+
+  // Get the timestamp of the test that completed most recently. If no tests
+  // have completed, return the null time.
+  Time LatestCompletionTimestamp(const std::vector<TestResult>& test_results);
+
+  // Path to the results file.
+  FilePath result_file_;
+
+  // The number of tests that run in this batch.
+  size_t num_tests_;
+
+  // The threshold past which we attribute a large time since latest completion
+  // to daylight savings time instead of a timed out test.
+  static constexpr TimeDelta kDaylightSavingsThreshold = Minutes(50);
 };
 
 // Return the number of parallel jobs to use, or 0U in case of error.

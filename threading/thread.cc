@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -22,14 +22,15 @@
 #include "base/task/sequence_manager/sequence_manager_impl.h"
 #include "base/task/sequence_manager/task_queue.h"
 #include "base/task/simple_task_executor.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/third_party/dynamic_annotations/dynamic_annotations.h"
 #include "base/threading/thread_id_name_manager.h"
 #include "base/threading/thread_local.h"
 #include "base/threading/thread_restrictions.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/types/pass_key.h"
 #include "build/build_config.h"
 
-#if BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_NACL)
+#if (BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_NACL)) || BUILDFLAG(IS_FUCHSIA)
 #include "base/files/file_descriptor_watcher_posix.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #endif
@@ -46,8 +47,12 @@ namespace {
 // because its Stop method was called.  This allows us to catch cases where
 // MessageLoop::QuitWhenIdle() is called directly, which is unexpected when
 // using a Thread to setup and run a MessageLoop.
-base::LazyInstance<base::ThreadLocalBoolean>::Leaky lazy_tls_bool =
+LazyInstance<ThreadLocalBoolean>::Leaky lazy_tls_bool =
     LAZY_INSTANCE_INITIALIZER;
+
+}  // namespace
+
+namespace internal {
 
 class SequenceManagerThreadDelegate : public Thread::Delegate {
  public:
@@ -55,12 +60,14 @@ class SequenceManagerThreadDelegate : public Thread::Delegate {
       MessagePumpType message_pump_type,
       OnceCallback<std::unique_ptr<MessagePump>()> message_pump_factory)
       : sequence_manager_(
-            sequence_manager::internal::SequenceManagerImpl::CreateUnbound(
+            sequence_manager::internal::CreateUnboundSequenceManagerImpl(
+                PassKey<base::internal::SequenceManagerThreadDelegate>(),
                 sequence_manager::SequenceManager::Settings::Builder()
                     .SetMessagePumpType(message_pump_type)
                     .Build())),
         default_task_queue_(sequence_manager_->CreateTaskQueue(
-            sequence_manager::TaskQueue::Spec("default_tq"))),
+            sequence_manager::TaskQueue::Spec(
+                sequence_manager::QueueName::DEFAULT_TQ))),
         message_pump_factory_(std::move(message_pump_factory)) {
     sequence_manager_->SetDefaultTaskRunner(default_task_queue_->task_runner());
   }
@@ -101,12 +108,14 @@ class SequenceManagerThreadDelegate : public Thread::Delegate {
   absl::optional<SimpleTaskExecutor> simple_task_executor_;
 };
 
-}  // namespace
+}  // namespace internal
 
 Thread::Options::Options() = default;
 
 Thread::Options::Options(MessagePumpType type, size_t size)
     : message_pump_type(type), stack_size(size) {}
+
+Thread::Options::Options(ThreadType thread_type) : thread_type(thread_type) {}
 
 Thread::Options::Options(Options&& other)
     : message_pump_type(std::move(other.message_pump_type)),
@@ -114,7 +123,7 @@ Thread::Options::Options(Options&& other)
       timer_slack(std::move(other.timer_slack)),
       message_pump_factory(std::move(other.message_pump_factory)),
       stack_size(std::move(other.stack_size)),
-      priority(std::move(other.priority)),
+      thread_type(std::move(other.thread_type)),
       joinable(std::move(other.joinable)) {
   other.moved_from = true;
 }
@@ -127,7 +136,7 @@ Thread::Options& Thread::Options::operator=(Thread::Options&& other) {
   timer_slack = std::move(other.timer_slack);
   message_pump_factory = std::move(other.message_pump_factory);
   stack_size = std::move(other.stack_size);
-  priority = std::move(other.priority);
+  thread_type = std::move(other.thread_type);
   joinable = std::move(other.joinable);
   other.moved_from = true;
 
@@ -188,10 +197,10 @@ bool Thread::StartWithOptions(Options options) {
     DCHECK(!options.message_pump_factory);
     delegate_ = std::move(options.delegate);
   } else if (options.message_pump_factory) {
-    delegate_ = std::make_unique<SequenceManagerThreadDelegate>(
+    delegate_ = std::make_unique<internal::SequenceManagerThreadDelegate>(
         MessagePumpType::CUSTOM, options.message_pump_factory);
   } else {
-    delegate_ = std::make_unique<SequenceManagerThreadDelegate>(
+    delegate_ = std::make_unique<internal::SequenceManagerThreadDelegate>(
         options.message_pump_type,
         BindOnce([](MessagePumpType type) { return MessagePump::Create(type); },
                  options.message_pump_type));
@@ -204,12 +213,13 @@ bool Thread::StartWithOptions(Options options) {
   // fixed).
   {
     AutoLock lock(thread_lock_);
-    bool success =
-        options.joinable
-            ? PlatformThread::CreateWithPriority(options.stack_size, this,
-                                                 &thread_, options.priority)
-            : PlatformThread::CreateNonJoinableWithPriority(
-                  options.stack_size, this, options.priority);
+    bool success = options.joinable
+                       ? PlatformThread::CreateWithType(
+                             options.stack_size, this, &thread_,
+                             options.thread_type, options.message_pump_type)
+                       : PlatformThread::CreateNonJoinableWithType(
+                             options.stack_size, this, options.thread_type,
+                             options.message_pump_type);
     if (!success) {
       DLOG(ERROR) << "failed to create thread";
       return false;
@@ -369,16 +379,15 @@ void Thread::ThreadMain() {
   // This binds CurrentThread and ThreadTaskRunnerHandle.
   delegate_->BindToCurrentThread(timer_slack_);
   DCHECK(CurrentThread::Get());
-  DCHECK(ThreadTaskRunnerHandle::IsSet());
-
-#if BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_NACL)
+  DCHECK(SingleThreadTaskRunner::HasCurrentDefault());
+#if (BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_NACL)) || BUILDFLAG(IS_FUCHSIA)
   // Allow threads running a MessageLoopForIO to use FileDescriptorWatcher API.
   std::unique_ptr<FileDescriptorWatcher> file_descriptor_watcher;
   if (CurrentIOThread::IsSet()) {
     file_descriptor_watcher = std::make_unique<FileDescriptorWatcher>(
         delegate_->GetDefaultTaskRunner());
   }
-#endif
+#endif  // (BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_NACL)) || BUILDFLAG(IS_FUCHSIA)
 
 #if BUILDFLAG(IS_WIN)
   std::unique_ptr<win::ScopedCOMInitializer> com_initializer;

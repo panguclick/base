@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,7 +14,6 @@ import android.graphics.drawable.Icon;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkInfo;
-import android.os.BatteryManager;
 import android.os.Build;
 import android.os.PowerManager;
 import android.os.Process;
@@ -28,6 +27,7 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
 import androidx.annotation.RequiresApi;
+import androidx.annotation.RequiresPermission;
 
 /**
  * Utility class to use new APIs that were added in M (API level 23). These need to exist in a
@@ -142,6 +142,7 @@ public final class ApiHelperForM {
     }
 
     /** See {@link AlarmManager#setExactAndAllowWhileIdle(int, long, PendingIntent) }.  */
+    @RequiresPermission(android.Manifest.permission.SCHEDULE_EXACT_ALARM)
     public static void setAlarmManagerExactAndAllowWhileIdle(AlarmManager alarmManager, int type,
             long triggerAtMillis, PendingIntent pendingIntent) {
         alarmManager.setExactAndAllowWhileIdle(type, triggerAtMillis, pendingIntent);
@@ -165,11 +166,6 @@ public final class ApiHelperForM {
     /** See {@link Display.Mode#getPhysicalHeight() }. */
     public static int getModePhysicalHeight(Display.Mode mode) {
         return mode.getPhysicalHeight();
-    }
-
-    /** See {@link BatteryManager#isCharging() }. */
-    public static boolean isCharging(BatteryManager batteryManager) {
-        return batteryManager.isCharging();
     }
 
     /** See {@link Icon#createWithBitmap(Bitmap) }. */

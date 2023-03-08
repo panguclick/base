@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -30,16 +30,19 @@ namespace debug {
 
 namespace {
 
-class TestActivityTracker : public ThreadActivityTracker {
+class TestActivityTracker {
  public:
   TestActivityTracker(std::unique_ptr<char[]> memory, size_t mem_size)
-      : ThreadActivityTracker(memset(memory.get(), 0, mem_size), mem_size),
-        mem_segment_(std::move(memory)) {}
+      : mem_segment_(std::move(memory)),
+        tracker_(memset(mem_segment_.get(), 0, mem_size), mem_size) {}
 
-  ~TestActivityTracker() override = default;
+  ~TestActivityTracker() = default;
+
+  ThreadActivityTracker& tracker() { return tracker_; }
 
  private:
-  std::unique_ptr<char[]> mem_segment_;
+  std::unique_ptr<char[]> mem_segment_;  // Must outlive `tracker_`
+  ThreadActivityTracker tracker_;
 };
 
 }  // namespace
@@ -62,7 +65,7 @@ class ActivityTrackerTest : public testing::Test {
     }
   }
 
-  std::unique_ptr<ThreadActivityTracker> CreateActivityTracker() {
+  std::unique_ptr<TestActivityTracker> CreateActivityTracker() {
     std::unique_ptr<char[]> memory(new char[kStackSize]);
     return std::make_unique<TestActivityTracker>(std::move(memory), kStackSize);
   }
@@ -88,7 +91,7 @@ class ActivityTrackerTest : public testing::Test {
     return GlobalActivityTracker::Get()->user_data_allocator_.cache_used();
   }
 
-  void HandleProcessExit(int64_t id,
+  void HandleProcessExit(ProcessId id,
                          int64_t stamp,
                          int code,
                          GlobalActivityTracker::ProcessPhase phase,
@@ -102,7 +105,7 @@ class ActivityTrackerTest : public testing::Test {
     exit_data_ = std::move(data);
   }
 
-  int64_t exit_id_ = 0;
+  ProcessId exit_id_ = 0;
   int64_t exit_stamp_;
   int exit_code_;
   GlobalActivityTracker::ProcessPhase exit_phase_;
@@ -156,17 +159,17 @@ TEST_F(ActivityTrackerTest, UserDataTest) {
 }
 
 TEST_F(ActivityTrackerTest, PushPopTest) {
-  std::unique_ptr<ThreadActivityTracker> tracker = CreateActivityTracker();
+  std::unique_ptr<TestActivityTracker> tracker = CreateActivityTracker();
   ThreadActivityTracker::Snapshot snapshot;
 
-  ASSERT_TRUE(tracker->CreateSnapshot(&snapshot));
+  ASSERT_TRUE(tracker->tracker().CreateSnapshot(&snapshot));
   ASSERT_EQ(0U, snapshot.activity_stack_depth);
   ASSERT_EQ(0U, snapshot.activity_stack.size());
 
   char origin1;
-  ActivityId id1 = tracker->PushActivity(&origin1, Activity::ACT_TASK,
-                                         ActivityData::ForTask(11));
-  ASSERT_TRUE(tracker->CreateSnapshot(&snapshot));
+  ActivityId id1 = tracker->tracker().PushActivity(&origin1, Activity::ACT_TASK,
+                                                   ActivityData::ForTask(11));
+  ASSERT_TRUE(tracker->tracker().CreateSnapshot(&snapshot));
   ASSERT_EQ(1U, snapshot.activity_stack_depth);
   ASSERT_EQ(1U, snapshot.activity_stack.size());
   EXPECT_NE(0, snapshot.activity_stack[0].time_internal);
@@ -177,9 +180,9 @@ TEST_F(ActivityTrackerTest, PushPopTest) {
 
   char origin2;
   char lock2;
-  ActivityId id2 = tracker->PushActivity(&origin2, Activity::ACT_LOCK,
-                                         ActivityData::ForLock(&lock2));
-  ASSERT_TRUE(tracker->CreateSnapshot(&snapshot));
+  ActivityId id2 = tracker->tracker().PushActivity(
+      &origin2, Activity::ACT_LOCK, ActivityData::ForLock(&lock2));
+  ASSERT_TRUE(tracker->tracker().CreateSnapshot(&snapshot));
   ASSERT_EQ(2U, snapshot.activity_stack_depth);
   ASSERT_EQ(2U, snapshot.activity_stack.size());
   EXPECT_LE(snapshot.activity_stack[0].time_internal,
@@ -190,8 +193,8 @@ TEST_F(ActivityTrackerTest, PushPopTest) {
   EXPECT_EQ(reinterpret_cast<uintptr_t>(&lock2),
             snapshot.activity_stack[1].data.lock.lock_address);
 
-  tracker->PopActivity(id2);
-  ASSERT_TRUE(tracker->CreateSnapshot(&snapshot));
+  tracker->tracker().PopActivity(id2);
+  ASSERT_TRUE(tracker->tracker().CreateSnapshot(&snapshot));
   ASSERT_EQ(1U, snapshot.activity_stack_depth);
   ASSERT_EQ(1U, snapshot.activity_stack.size());
   EXPECT_EQ(Activity::ACT_TASK, snapshot.activity_stack[0].activity_type);
@@ -199,8 +202,8 @@ TEST_F(ActivityTrackerTest, PushPopTest) {
             snapshot.activity_stack[0].origin_address);
   EXPECT_EQ(11U, snapshot.activity_stack[0].data.task.sequence_id);
 
-  tracker->PopActivity(id1);
-  ASSERT_TRUE(tracker->CreateSnapshot(&snapshot));
+  tracker->tracker().PopActivity(id1);
+  ASSERT_TRUE(tracker->tracker().CreateSnapshot(&snapshot));
   ASSERT_EQ(0U, snapshot.activity_stack_depth);
   ASSERT_EQ(0U, snapshot.activity_stack.size());
 }
@@ -484,7 +487,7 @@ TEST_F(ActivityTrackerTest, ThreadDeathTest) {
 TEST_F(ActivityTrackerTest, ProcessDeathTest) {
   // This doesn't actually create and destroy a process. Instead, it uses for-
   // testing interfaces to simulate data created by other processes.
-  const int64_t other_process_id = GetCurrentProcId() + 1;
+  const ProcessId other_process_id = GetCurrentProcId() + 1;
 
   GlobalActivityTracker::CreateWithLocalMemory(kMemorySize, 0, "", 3, 0);
   GlobalActivityTracker* global = GlobalActivityTracker::Get();
@@ -528,7 +531,7 @@ TEST_F(ActivityTrackerTest, ProcessDeathTest) {
   // Change the objects to appear to be owned by another process. Use a "past"
   // time so that exit-time is always later than create-time.
   const int64_t past_stamp = Time::Now().ToInternalValue() - 1;
-  int64_t owning_id;
+  ProcessId owning_id;
   int64_t stamp;
   ASSERT_TRUE(ActivityUserData::GetOwningProcessId(
       global->process_data().GetBaseAddress(), &owning_id, &stamp));
@@ -554,7 +557,7 @@ TEST_F(ActivityTrackerTest, ProcessDeathTest) {
   EXPECT_EQ(other_process_id, owning_id);
 
   // Check that process exit will perform callback and free the allocations.
-  ASSERT_EQ(0, exit_id_);
+  ASSERT_EQ(ProcessId{0}, exit_id_);
   ASSERT_EQ(GlobalActivityTracker::kTypeIdProcessDataRecord,
             global->allocator()->GetType(proc_data_ref));
   ASSERT_EQ(GlobalActivityTracker::kTypeIdActivityTracker,

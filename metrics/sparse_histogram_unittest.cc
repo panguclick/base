@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -63,9 +63,7 @@ class SparseHistogramTest : public testing::TestWithParam<bool> {
     statistics_recorder_ = StatisticsRecorder::CreateTemporaryForTesting();
   }
 
-  void UninitializeStatisticsRecorder() {
-    statistics_recorder_.reset();
-  }
+  void UninitializeStatisticsRecorder() { statistics_recorder_.reset(); }
 
   void CreatePersistentMemoryAllocator() {
     GlobalHistogramAllocator::CreateWithLocalMemory(
@@ -137,6 +135,47 @@ TEST_P(SparseHistogramTest, BasicTestAddCount) {
   EXPECT_EQ(55, snapshot2->TotalCount());
   EXPECT_EQ(30, snapshot2->GetCount(100));
   EXPECT_EQ(25, snapshot2->GetCount(101));
+}
+
+// Check that delta calculations work correctly with SnapshotUnloggedSamples()
+// and MarkSamplesAsLogged().
+TEST_P(SparseHistogramTest, UnloggedSamplesTest) {
+  std::unique_ptr<SparseHistogram> histogram(NewSparseHistogram("Sparse"));
+  histogram->AddCount(1, 1);
+  histogram->AddCount(2, 2);
+
+  std::unique_ptr<HistogramSamples> samples =
+      histogram->SnapshotUnloggedSamples();
+  EXPECT_EQ(3, samples->TotalCount());
+  EXPECT_EQ(1, samples->GetCount(1));
+  EXPECT_EQ(2, samples->GetCount(2));
+  EXPECT_EQ(samples->TotalCount(), samples->redundant_count());
+
+  // Snapshot unlogged samples again, which would be the same as above.
+  samples = histogram->SnapshotUnloggedSamples();
+  EXPECT_EQ(3, samples->TotalCount());
+  EXPECT_EQ(1, samples->GetCount(1));
+  EXPECT_EQ(2, samples->GetCount(2));
+  EXPECT_EQ(samples->TotalCount(), samples->redundant_count());
+
+  // Verify that marking the samples as logged works correctly, and that
+  // SnapshotDelta() will not pick up the samples.
+  histogram->MarkSamplesAsLogged(*samples);
+  samples = histogram->SnapshotUnloggedSamples();
+  EXPECT_EQ(0, samples->TotalCount());
+  samples = histogram->SnapshotDelta();
+  EXPECT_EQ(0, samples->TotalCount());
+
+  // Similarly, verify that SnapshotDelta() marks the samples as logged.
+  histogram->AddCount(1, 1);
+  histogram->AddCount(2, 2);
+  samples = histogram->SnapshotDelta();
+  EXPECT_EQ(3, samples->TotalCount());
+  EXPECT_EQ(1, samples->GetCount(1));
+  EXPECT_EQ(2, samples->GetCount(2));
+  EXPECT_EQ(samples->TotalCount(), samples->redundant_count());
+  samples = histogram->SnapshotUnloggedSamples();
+  EXPECT_EQ(0, samples->TotalCount());
 }
 
 TEST_P(SparseHistogramTest, AddCount_LargeValuesDontOverflow) {
@@ -312,8 +351,7 @@ TEST_P(SparseHistogramTest, FactoryTime) {
   int64_t create_ms = create_ticks.InMilliseconds();
 
   VLOG(1) << kTestCreateCount << " histogram creations took " << create_ms
-          << "ms or about "
-          << (create_ms * 1000000) / kTestCreateCount
+          << "ms or about " << (create_ms * 1000000) / kTestCreateCount
           << "ns each.";
 
   // Calculate cost of looking up existing histograms.
@@ -332,8 +370,7 @@ TEST_P(SparseHistogramTest, FactoryTime) {
   int64_t lookup_ms = lookup_ticks.InMilliseconds();
 
   VLOG(1) << kTestLookupCount << " histogram lookups took " << lookup_ms
-          << "ms or about "
-          << (lookup_ms * 1000000) / kTestLookupCount
+          << "ms or about " << (lookup_ms * 1000000) / kTestLookupCount
           << "ns each.";
 
   // Calculate cost of accessing histograms.
@@ -347,9 +384,7 @@ TEST_P(SparseHistogramTest, FactoryTime) {
   int64_t add_ms = add_ticks.InMilliseconds();
 
   VLOG(1) << kTestAddCount << " histogram adds took " << add_ms
-          << "ms or about "
-          << (add_ms * 1000000) / kTestAddCount
-          << "ns each.";
+          << "ms or about " << (add_ms * 1000000) / kTestAddCount << "ns each.";
 }
 
 TEST_P(SparseHistogramTest, ExtremeValues) {
@@ -409,23 +444,22 @@ TEST_P(SparseHistogramTest, CheckGetCountAndBucketData) {
   EXPECT_EQ(25, count_and_data_bucket.count);
   EXPECT_EQ(4000, count_and_data_bucket.sum);
 
-  const base::Value::ConstListView buckets_list =
-      count_and_data_bucket.buckets.GetListDeprecated();
+  const base::Value::List& buckets_list = count_and_data_bucket.buckets;
   ASSERT_EQ(2u, buckets_list.size());
 
   // Check the first bucket.
-  const base::Value& bucket1 = buckets_list[0];
-  ASSERT_TRUE(bucket1.is_dict());
-  EXPECT_EQ(bucket1.FindIntKey("low"), absl::optional<int>(100));
-  EXPECT_EQ(bucket1.FindIntKey("high"), absl::optional<int>(101));
-  EXPECT_EQ(bucket1.FindIntKey("count"), absl::optional<int>(10));
+  const base::Value::Dict* bucket1 = buckets_list[0].GetIfDict();
+  ASSERT_TRUE(bucket1 != nullptr);
+  EXPECT_EQ(bucket1->FindInt("low"), absl::optional<int>(100));
+  EXPECT_EQ(bucket1->FindInt("high"), absl::optional<int>(101));
+  EXPECT_EQ(bucket1->FindInt("count"), absl::optional<int>(10));
 
   // Check the second bucket.
-  const base::Value& bucket2 = buckets_list[1];
-  ASSERT_TRUE(bucket2.is_dict());
-  EXPECT_EQ(bucket2.FindIntKey("low"), absl::optional<int>(200));
-  EXPECT_EQ(bucket2.FindIntKey("high"), absl::optional<int>(201));
-  EXPECT_EQ(bucket2.FindIntKey("count"), absl::optional<int>(15));
+  const base::Value::Dict* bucket2 = buckets_list[1].GetIfDict();
+  ASSERT_TRUE(bucket2 != nullptr);
+  EXPECT_EQ(bucket2->FindInt("low"), absl::optional<int>(200));
+  EXPECT_EQ(bucket2->FindInt("high"), absl::optional<int>(201));
+  EXPECT_EQ(bucket2->FindInt("count"), absl::optional<int>(15));
 }
 
 TEST_P(SparseHistogramTest, WriteAscii) {
@@ -451,9 +485,9 @@ TEST_P(SparseHistogramTest, ToGraphDict) {
   histogram->AddCount(/*sample=*/4, /*count=*/5);
   histogram->AddCount(/*sample=*/10, /*count=*/15);
 
-  base::Value output = histogram->ToGraphDict();
-  std::string* header = output.FindStringKey("header");
-  std::string* body = output.FindStringKey("body");
+  base::Value::Dict output = histogram->ToGraphDict();
+  std::string* header = output.FindString("header");
+  std::string* body = output.FindString("body");
 
   const char kOutputHeaderFormatRe[] =
       R"(Histogram: HTMLOut recorded 20 samples.*)";

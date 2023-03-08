@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -54,7 +54,6 @@
 #include "base/test/test_simple_task_runner.h"
 #include "base/threading/sequence_local_storage_slot.h"
 #include "base/threading/thread.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/trace_event/base_tracing.h"
 #include "base/tracing_buildflags.h"
@@ -123,7 +122,7 @@ void PrintTo(const RunnerType type, std::ostream* os) {
   *os << ToString(type);
 }
 
-constexpr TimeDelta kLeeway = sequence_manager::WakeUp::kDefaultLeeway;
+constexpr TimeDelta kLeeway = kDefaultLeeway;
 
 using MockTask = MockCallback<base::RepeatingCallback<void()>>;
 
@@ -182,7 +181,7 @@ class FixtureWithMockTaskRunner final : public Fixture {
                                            test_task_runner_)),
         sequence_manager_(SequenceManagerForTest::Create(
             nullptr,
-            ThreadTaskRunnerHandle::Get(),
+            SingleThreadTaskRunner::GetCurrentDefault(),
             mock_tick_clock(),
             SequenceManager::Settings::Builder()
                 .SetMessagePumpType(MessagePumpType::DEFAULT)
@@ -260,6 +259,8 @@ class FixtureWithMockMessagePump : public Fixture {
       : call_counting_clock_(&mock_clock_), wake_up_type_(wake_up_type) {
     if (wake_up_type_ == WakeUpType::kAlign)
       feature_list_.InitAndEnableFeature(kAlignWakeUps);
+    else
+      feature_list_.InitAndDisableFeature(kAlignWakeUps);
     // A null clock triggers some assertions.
     mock_clock_.Advance(Milliseconds(1));
 
@@ -337,8 +338,7 @@ class FixtureWithMockMessagePump : public Fixture {
 
   TimeTicks FromStartAligned(TimeDelta delta) const override {
     if (wake_up_type_ == WakeUpType::kAlign) {
-      return (start_time_ + delta)
-          .SnappedToNextTick(TimeTicks(), Milliseconds(8));
+      return (start_time_ + delta).SnappedToNextTick(TimeTicks(), kLeeway);
     }
     return start_time_ + delta;
   }
@@ -369,13 +369,11 @@ class SequenceManagerTest
         fixture_ =
             std::make_unique<FixtureWithMockMessagePump>(GetWakeUpType());
         break;
-      default:
-        NOTREACHED();
     }
   }
 
   scoped_refptr<TestTaskQueue> CreateTaskQueue(
-      TaskQueue::Spec spec = TaskQueue::Spec("test")) {
+      TaskQueue::Spec spec = TaskQueue::Spec(QueueName::TEST_TQ)) {
     return sequence_manager()->CreateTaskQueueWithType<TestTaskQueue>(spec);
   }
 
@@ -450,7 +448,9 @@ class SequenceManagerTest
 auto GetTestTypes() {
   return testing::Values(
       std::make_tuple(RunnerType::kMessagePump, WakeUpType::kDefault),
+#if !BUILDFLAG(IS_WIN)
       std::make_tuple(RunnerType::kMessagePump, WakeUpType::kAlign),
+#endif
       std::make_tuple(RunnerType::kMockTaskRunner, WakeUpType::kDefault));
 }
 
@@ -509,7 +509,7 @@ class QueueTimeTaskObserver : public TaskObserver {
 class ScopedNoWakeUpsForCanceledTasks {
  public:
   ScopedNoWakeUpsForCanceledTasks()
-      : scoped_feature_list_(SequenceManagerImpl::kNoWakeUpsForCanceledTasks) {
+      : scoped_feature_list_(kNoWakeUpsForCanceledTasks) {
     SequenceManagerImpl::ApplyNoWakeUpsForCanceledTasks();
   }
 
@@ -581,8 +581,8 @@ TEST_P(SequenceManagerTest,
 
   std::vector<scoped_refptr<TestTaskQueue>> queues;
   for (size_t i = 0; i < 3; i++) {
-    queues.push_back(
-        CreateTaskQueue(TaskQueue::Spec("test").SetDelayedFencesAllowed(true)));
+    queues.push_back(CreateTaskQueue(
+        TaskQueue::Spec(QueueName::TEST_TQ).SetDelayedFencesAllowed(true)));
   }
 
   queues[0]->task_runner()->PostTask(FROM_HERE, BindOnce(&NopTask));
@@ -897,7 +897,8 @@ TEST_P(SequenceManagerTest, DelayedTaskAtPosting) {
   auto handle = queue->task_runner()->PostCancelableDelayedTaskAt(
       subtle::PostDelayedTaskPassKeyForTesting(), FROM_HERE,
       BindOnce(&TestTask, 1, &run_order),
-      sequence_manager()->NowTicks() + kDelay);
+      sequence_manager()->NowTicks() + kDelay,
+      subtle::DelayPolicy::kFlexibleNoSooner);
   EXPECT_EQ(FromStartAligned(kDelay), NextPendingTaskTime());
   EXPECT_FALSE(queue->HasTaskToRunImmediatelyOrReadyDelayedTask());
   EXPECT_TRUE(run_order.empty());
@@ -917,7 +918,7 @@ TEST_P(SequenceManagerTest, DelayedTaskAtPosting_FlexiblePreferEarly) {
 
   TimeTicks start_time = sequence_manager()->NowTicks();
   std::vector<EnqueueOrder> run_order;
-  constexpr TimeDelta kDelay(Milliseconds(10));
+  constexpr TimeDelta kDelay(Milliseconds(20));
   auto handle = queue->task_runner()->PostCancelableDelayedTaskAt(
       subtle::PostDelayedTaskPassKeyForTesting(), FROM_HERE,
       BindOnce(&TestTask, 1, &run_order),
@@ -937,11 +938,11 @@ TEST_P(SequenceManagerTest, DelayedTaskAtPosting_FlexiblePreferEarly) {
             sequence_manager()->GetPendingWakeUp(&lazy_now));
 
   // The task doesn't run before the delay has completed.
-  FastForwardBy(kDelay - WakeUp::kDefaultLeeway - Milliseconds(1));
+  FastForwardBy(kDelay - kLeeway - Milliseconds(1));
   EXPECT_TRUE(run_order.empty());
 
   // After the delay has completed, the task runs normally.
-  FastForwardBy(WakeUp::kDefaultLeeway + Milliseconds(1));
+  FastForwardBy(kLeeway + Milliseconds(1));
   EXPECT_THAT(run_order, ElementsAre(1u));
   EXPECT_FALSE(queue->HasTaskToRunImmediatelyOrReadyDelayedTask());
 }
@@ -985,7 +986,8 @@ TEST_P(SequenceManagerTest, DelayedTaskAtPosting_Immediate) {
   std::vector<EnqueueOrder> run_order;
   auto handle = queue->task_runner()->PostCancelableDelayedTaskAt(
       subtle::PostDelayedTaskPassKeyForTesting(), FROM_HERE,
-      BindOnce(&TestTask, 1, &run_order), TimeTicks());
+      BindOnce(&TestTask, 1, &run_order), TimeTicks(),
+      subtle::DelayPolicy::kFlexibleNoSooner);
   EXPECT_TRUE(queue->GetTaskQueueImpl()->HasTaskToRunImmediately());
   EXPECT_TRUE(run_order.empty());
 
@@ -998,8 +1000,8 @@ TEST_P(SequenceManagerTest, DelayedTaskAtPosting_Immediate) {
 TEST(SequenceManagerTestWithMockTaskRunner,
      DelayedTaskExecutedInOneMessageLoopTask) {
   FixtureWithMockTaskRunner fixture;
-  auto queue =
-      fixture.sequence_manager()->CreateTaskQueue(TaskQueue::Spec("test"));
+  auto queue = fixture.sequence_manager()->CreateTaskQueue(
+      TaskQueue::Spec(QueueName::TEST_TQ));
 
   queue->task_runner()->PostDelayedTask(FROM_HERE, BindOnce(&NopTask),
                                         Milliseconds(10));
@@ -1044,7 +1046,8 @@ TEST_P(SequenceManagerTest,
   auto handle1 = queue->task_runner()->PostCancelableDelayedTaskAt(
       subtle::PostDelayedTaskPassKeyForTesting(), FROM_HERE,
       BindOnce(&TestTask, 1, &run_order),
-      sequence_manager()->NowTicks() + Milliseconds(10));
+      sequence_manager()->NowTicks() + Milliseconds(10),
+      subtle::DelayPolicy::kFlexibleNoSooner);
 
   queue->task_runner()->PostDelayedTask(
       FROM_HERE, BindOnce(&TestTask, 2, &run_order), Milliseconds(8));
@@ -1052,7 +1055,8 @@ TEST_P(SequenceManagerTest,
   auto handle2 = queue->task_runner()->PostCancelableDelayedTaskAt(
       subtle::PostDelayedTaskPassKeyForTesting(), FROM_HERE,
       BindOnce(&TestTask, 3, &run_order),
-      sequence_manager()->NowTicks() + Milliseconds(5));
+      sequence_manager()->NowTicks() + Milliseconds(5),
+      subtle::DelayPolicy::kFlexibleNoSooner);
 
   EXPECT_EQ(FromStartAligned(Milliseconds(5)), NextPendingTaskTime());
 
@@ -1102,7 +1106,8 @@ TEST_P(SequenceManagerTest, DelayedTaskAtPosting_MultipleTasks_AscendingOrder) {
   auto handle1 = queue->task_runner()->PostCancelableDelayedTaskAt(
       subtle::PostDelayedTaskPassKeyForTesting(), FROM_HERE,
       BindOnce(&TestTask, 1, &run_order),
-      sequence_manager()->NowTicks() + Milliseconds(1));
+      sequence_manager()->NowTicks() + Milliseconds(1),
+      subtle::DelayPolicy::kFlexibleNoSooner);
 
   queue->task_runner()->PostDelayedTask(
       FROM_HERE, BindOnce(&TestTask, 2, &run_order), Milliseconds(5));
@@ -1110,7 +1115,8 @@ TEST_P(SequenceManagerTest, DelayedTaskAtPosting_MultipleTasks_AscendingOrder) {
   auto handle2 = queue->task_runner()->PostCancelableDelayedTaskAt(
       subtle::PostDelayedTaskPassKeyForTesting(), FROM_HERE,
       BindOnce(&TestTask, 3, &run_order),
-      sequence_manager()->NowTicks() + Milliseconds(10));
+      sequence_manager()->NowTicks() + Milliseconds(10),
+      subtle::DelayPolicy::kFlexibleNoSooner);
 
   EXPECT_EQ(FromStartAligned(Milliseconds(1)), NextPendingTaskTime());
 
@@ -1129,8 +1135,8 @@ TEST_P(SequenceManagerTest, DelayedTaskAtPosting_MultipleTasks_AscendingOrder) {
 TEST(SequenceManagerTestWithMockTaskRunner,
      PostDelayedTask_SharesUnderlyingDelayedTasks) {
   FixtureWithMockTaskRunner fixture;
-  auto queue =
-      fixture.sequence_manager()->CreateTaskQueue(TaskQueue::Spec("test"));
+  auto queue = fixture.sequence_manager()->CreateTaskQueue(
+      TaskQueue::Spec(QueueName::TEST_TQ));
 
   std::vector<EnqueueOrder> run_order;
   TimeDelta delay(Milliseconds(10));
@@ -1147,8 +1153,8 @@ TEST(SequenceManagerTestWithMockTaskRunner,
 TEST(SequenceManagerTestWithMockTaskRunner,
      CrossThreadTaskPostingToDisabledQueueDoesntScheduleWork) {
   FixtureWithMockTaskRunner fixture;
-  auto queue =
-      fixture.sequence_manager()->CreateTaskQueue(TaskQueue::Spec("test"));
+  auto queue = fixture.sequence_manager()->CreateTaskQueue(
+      TaskQueue::Spec(QueueName::TEST_TQ));
   std::unique_ptr<TaskQueue::QueueEnabledVoter> voter =
       queue->CreateQueueEnabledVoter();
   voter->SetVoteToEnable(false);
@@ -1175,8 +1181,8 @@ TEST(SequenceManagerTestWithMockTaskRunner,
 TEST(SequenceManagerTestWithMockTaskRunner,
      CrossThreadTaskPostingToBlockedQueueDoesntScheduleWork) {
   FixtureWithMockTaskRunner fixture;
-  auto queue =
-      fixture.sequence_manager()->CreateTaskQueue(TaskQueue::Spec("test"));
+  auto queue = fixture.sequence_manager()->CreateTaskQueue(
+      TaskQueue::Spec(QueueName::TEST_TQ));
   queue->InsertFence(TaskQueue::InsertFencePosition::kNow);
 
   WaitableEvent done_event;
@@ -1500,8 +1506,8 @@ void RecordTimeAndQueueTask(
 }  // namespace
 
 TEST_P(SequenceManagerTest, DelayedFence_DelayedTasks) {
-  scoped_refptr<TestTaskQueue> queue =
-      CreateTaskQueue(TaskQueue::Spec("test").SetDelayedFencesAllowed(true));
+  scoped_refptr<TestTaskQueue> queue = CreateTaskQueue(
+      TaskQueue::Spec(QueueName::TEST_TQ).SetDelayedFencesAllowed(true));
 
   std::vector<TimeTicks> run_times;
   queue->task_runner()->PostDelayedTask(
@@ -1534,8 +1540,8 @@ TEST_P(SequenceManagerTest, DelayedFence_DelayedTasks) {
 
 TEST_P(SequenceManagerTest, DelayedFence_ImmediateTasks) {
   const auto kStartTime = mock_tick_clock()->NowTicks();
-  scoped_refptr<TestTaskQueue> queue =
-      CreateTaskQueue(TaskQueue::Spec("test").SetDelayedFencesAllowed(true));
+  scoped_refptr<TestTaskQueue> queue = CreateTaskQueue(
+      TaskQueue::Spec(QueueName::TEST_TQ).SetDelayedFencesAllowed(true));
 
   std::vector<TimeTicks> run_times;
   queue->InsertFenceAt(mock_tick_clock()->NowTicks() + Milliseconds(250));
@@ -1564,8 +1570,8 @@ TEST_P(SequenceManagerTest, DelayedFence_ImmediateTasks) {
 
 TEST_P(SequenceManagerTest, DelayedFence_RemovedFenceDoesNotActivate) {
   const auto kStartTime = mock_tick_clock()->NowTicks();
-  scoped_refptr<TestTaskQueue> queue =
-      CreateTaskQueue(TaskQueue::Spec("test").SetDelayedFencesAllowed(true));
+  scoped_refptr<TestTaskQueue> queue = CreateTaskQueue(
+      TaskQueue::Spec(QueueName::TEST_TQ).SetDelayedFencesAllowed(true));
 
   std::vector<TimeTicks> run_times;
   queue->InsertFenceAt(mock_tick_clock()->NowTicks() + Milliseconds(250));
@@ -1598,10 +1604,10 @@ TEST_P(SequenceManagerTest, DelayedFence_TakeIncomingImmediateQueue) {
   // is swapped with an immediate incoming queue and a delayed fence
   // is activated, forcing a different queue to become active.
   const auto kStartTime = mock_tick_clock()->NowTicks();
-  scoped_refptr<TestTaskQueue> queue1 =
-      CreateTaskQueue(TaskQueue::Spec("test").SetDelayedFencesAllowed(true));
-  scoped_refptr<TestTaskQueue> queue2 =
-      CreateTaskQueue(TaskQueue::Spec("test").SetDelayedFencesAllowed(true));
+  scoped_refptr<TestTaskQueue> queue1 = CreateTaskQueue(
+      TaskQueue::Spec(QueueName::TEST_TQ).SetDelayedFencesAllowed(true));
+  scoped_refptr<TestTaskQueue> queue2 = CreateTaskQueue(
+      TaskQueue::Spec(QueueName::TEST2_TQ).SetDelayedFencesAllowed(true));
 
   std::vector<std::pair<scoped_refptr<TestTaskQueue>, TimeTicks>> run_times;
 
@@ -1964,8 +1970,8 @@ TEST_P(SequenceManagerTest, GetNextDelayedWakeUp_MultipleQueues) {
 
 TEST(SequenceManagerWithTaskRunnerTest, DeleteSequenceManagerInsideATask) {
   FixtureWithMockTaskRunner fixture;
-  auto queue =
-      fixture.sequence_manager()->CreateTaskQueue(TaskQueue::Spec("test"));
+  auto queue = fixture.sequence_manager()->CreateTaskQueue(
+      TaskQueue::Spec(QueueName::TEST_TQ));
 
   queue->task_runner()->PostTask(FROM_HERE, BindLambdaForTesting([&]() {
                                    fixture.DestroySequenceManager();
@@ -1979,10 +1985,10 @@ TEST(SequenceManagerWithTaskRunnerTest, DeleteSequenceManagerInsideATask) {
 TEST_P(SequenceManagerTest, GetAndClearSystemIsQuiescentBit) {
   auto queues = CreateTaskQueues(3u);
 
-  scoped_refptr<TestTaskQueue> queue0 =
-      CreateTaskQueue(TaskQueue::Spec("test").SetShouldMonitorQuiescence(true));
-  scoped_refptr<TestTaskQueue> queue1 =
-      CreateTaskQueue(TaskQueue::Spec("test").SetShouldMonitorQuiescence(true));
+  scoped_refptr<TestTaskQueue> queue0 = CreateTaskQueue(
+      TaskQueue::Spec(QueueName::TEST_TQ).SetShouldMonitorQuiescence(true));
+  scoped_refptr<TestTaskQueue> queue1 = CreateTaskQueue(
+      TaskQueue::Spec(QueueName::TEST2_TQ).SetShouldMonitorQuiescence(true));
   scoped_refptr<TestTaskQueue> queue2 = CreateTaskQueue();
 
   EXPECT_TRUE(sequence_manager()->GetAndClearSystemIsQuiescentBit());
@@ -2419,21 +2425,21 @@ TEST_P(SequenceManagerTest,
 
   sequence_manager()->SetTimeDomain(domain.get());
   queue->task_runner()->PostDelayedTask(
-      FROM_HERE, BindOnce(&TestTask, 1, &run_order), Milliseconds(40));
+      FROM_HERE, BindOnce(&TestTask, 1, &run_order), Milliseconds(400));
 
   sequence_manager()->ResetTimeDomain();
   queue->task_runner()->PostDelayedTask(
-      FROM_HERE, BindOnce(&TestTask, 2, &run_order), Milliseconds(30));
+      FROM_HERE, BindOnce(&TestTask, 2, &run_order), Milliseconds(300));
 
   sequence_manager()->SetTimeDomain(domain.get());
   queue->task_runner()->PostDelayedTask(
-      FROM_HERE, BindOnce(&TestTask, 3, &run_order), Milliseconds(20));
+      FROM_HERE, BindOnce(&TestTask, 3, &run_order), Milliseconds(200));
 
   sequence_manager()->ResetTimeDomain();
   queue->task_runner()->PostDelayedTask(
-      FROM_HERE, BindOnce(&TestTask, 4, &run_order), Milliseconds(10));
+      FROM_HERE, BindOnce(&TestTask, 4, &run_order), Milliseconds(100));
 
-  FastForwardBy(Milliseconds(40));
+  FastForwardBy(Milliseconds(400));
   EXPECT_THAT(run_order, ElementsAre(4u, 3u, 2u, 1u));
 
   queue->ShutdownTaskQueue();
@@ -2944,8 +2950,8 @@ void ChromiumRunloopInspectionTask(
 TEST(SequenceManagerTestWithMockTaskRunner,
      NumberOfPendingTasksOnChromiumRunLoop) {
   FixtureWithMockTaskRunner fixture;
-  auto queue =
-      fixture.sequence_manager()->CreateTaskQueue(TaskQueue::Spec("test"));
+  auto queue = fixture.sequence_manager()->CreateTaskQueue(
+      TaskQueue::Spec(QueueName::TEST_TQ));
 
   // NOTE because tasks posted to the chromiumrun loop are not cancellable, we
   // will end up with a lot more tasks posted if the delayed tasks were posted
@@ -3218,34 +3224,6 @@ TEST_P(SequenceManagerTest, CurrentlyExecutingTaskQueue_NestedLoop) {
                                                  queue0->GetTaskQueueImpl()));
   EXPECT_EQ(nullptr, sequence_manager()->currently_executing_task_queue());
 }
-
-#if BUILDFLAG(ENABLE_BASE_TRACING)
-TEST_P(SequenceManagerTest, BlameContextAttribution) {
-  if (GetUnderlyingRunnerType() == RunnerType::kMessagePump)
-    return;
-  using trace_analyzer::Query;
-
-  auto queue = CreateTaskQueue();
-
-  trace_analyzer::Start("*");
-  {
-    trace_event::BlameContext blame_context("base", "name", "type", "scope", 0,
-                                            nullptr);
-    blame_context.Initialize();
-    queue->SetBlameContext(&blame_context);
-    queue->task_runner()->PostTask(FROM_HERE, BindOnce(&NopTask));
-    RunLoop().RunUntilIdle();
-  }
-  auto analyzer = trace_analyzer::Stop();
-
-  trace_analyzer::TraceEventVector events;
-  Query q = Query::EventPhaseIs(TRACE_EVENT_PHASE_ENTER_CONTEXT) ||
-            Query::EventPhaseIs(TRACE_EVENT_PHASE_LEAVE_CONTEXT);
-  analyzer->FindEvents(q, &events);
-
-  EXPECT_EQ(2u, events.size());
-}
-#endif  // BUILDFLAG(ENABLE_BASE_TRACING)
 
 TEST_P(SequenceManagerTest, NoWakeUpsForCanceledDelayedTasks) {
   auto queue = CreateTaskQueue();
@@ -4319,11 +4297,11 @@ TEST(SequenceManagerBasicTest, DefaultTaskRunnerSupport) {
       sequence_manager::CreateSequenceManagerOnCurrentThreadWithPump(
           MessagePump::Create(MessagePumpType::DEFAULT));
   auto queue = base_sequence_manager->CreateTaskQueue(
-      sequence_manager::TaskQueue::Spec("default_tq"));
+      sequence_manager::TaskQueue::Spec(QueueName::DEFAULT_TQ));
   base_sequence_manager->SetDefaultTaskRunner(queue->task_runner());
 
   scoped_refptr<SingleThreadTaskRunner> original_task_runner =
-      ThreadTaskRunnerHandle::Get();
+      SingleThreadTaskRunner::GetCurrentDefault();
   scoped_refptr<SingleThreadTaskRunner> custom_task_runner =
       MakeRefCounted<TestSimpleTaskRunner>();
   {
@@ -4331,9 +4309,9 @@ TEST(SequenceManagerBasicTest, DefaultTaskRunnerSupport) {
         CreateSequenceManagerOnCurrentThread(SequenceManager::Settings());
 
     manager->SetDefaultTaskRunner(custom_task_runner);
-    DCHECK_EQ(custom_task_runner, ThreadTaskRunnerHandle::Get());
+    DCHECK_EQ(custom_task_runner, SingleThreadTaskRunner::GetCurrentDefault());
   }
-  DCHECK_EQ(original_task_runner, ThreadTaskRunnerHandle::Get());
+  DCHECK_EQ(original_task_runner, SingleThreadTaskRunner::GetCurrentDefault());
 }
 
 TEST_P(SequenceManagerTest, CanceledTasksInQueueCantMakeOtherTasksSkipAhead) {
@@ -4489,7 +4467,7 @@ TEST_P(SequenceManagerTest, TaskQueueTaskRunnerDetach) {
 
   // Create without a sequence manager.
   std::unique_ptr<TaskQueueImpl> queue2 = std::make_unique<TaskQueueImpl>(
-      nullptr, nullptr, TaskQueue::Spec("stub"));
+      nullptr, nullptr, TaskQueue::Spec(QueueName::TEST_TQ));
   scoped_refptr<SingleThreadTaskRunner> task_runner2 =
       queue2->CreateTaskRunner(0);
   EXPECT_FALSE(task_runner2->PostTask(FROM_HERE, BindOnce(&NopTask)));
@@ -4521,8 +4499,8 @@ TEST_P(SequenceManagerTest, DestructorPostsViaTaskRunnerHandleDuringShutdown) {
   bool run = false;
   task_queue->task_runner()->PostTask(
       FROM_HERE, RunOnDestruction(BindLambdaForTesting([&]() {
-        ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
-                                                base::BindOnce(&NopTask));
+        SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+            FROM_HERE, base::BindOnce(&NopTask));
         run = true;
       })));
 
@@ -4869,7 +4847,7 @@ TEST_P(SequenceManagerTest, OnSystemIdleTimeDomainNotification) {
 
 TEST_P(SequenceManagerTest, CreateTaskQueue) {
   scoped_refptr<TaskQueue> task_queue =
-      sequence_manager()->CreateTaskQueue(TaskQueue::Spec("test"));
+      sequence_manager()->CreateTaskQueue(TaskQueue::Spec(QueueName::TEST_TQ));
   EXPECT_THAT(task_queue.get(), testing::NotNull());
 
   task_queue->task_runner()->PostTask(FROM_HERE, BindOnce(&NopTask));
@@ -5205,56 +5183,6 @@ TEST_P(SequenceManagerTest, ReclaimMemoryRemovesCorrectQueueFromSet) {
   EXPECT_THAT(order, ElementsAre(1, 2, 3));
 }
 
-TEST_P(SequenceManagerTest, OnNativeWorkPending) {
-  MockTask task;
-  auto queue = CreateTaskQueue();
-  queue->SetQueuePriority(TaskQueue::QueuePriority::kNormalPriority);
-
-  auto CheckPostedTaskRan = [&](bool should_have_run) {
-    EXPECT_CALL(task, Run).Times(should_have_run ? 1 : 0);
-    RunLoop().RunUntilIdle();
-    Mock::VerifyAndClearExpectations(&task);
-  };
-
-  // Scheduling native work with higher priority causes the posted task to be
-  // deferred.
-  auto native_work = sequence_manager()->OnNativeWorkPending(
-      TaskQueue::QueuePriority::kHighPriority);
-  queue->task_runner()->PostTask(FROM_HERE, task.Get());
-  CheckPostedTaskRan(false);
-
-  // Once the native work completes, the posted task is free to execute.
-  native_work.reset();
-  CheckPostedTaskRan(true);
-
-  // Lower priority native work doesn't preempt posted tasks.
-  native_work = sequence_manager()->OnNativeWorkPending(
-      TaskQueue::QueuePriority::kLowPriority);
-  queue->task_runner()->PostTask(FROM_HERE, task.Get());
-  CheckPostedTaskRan(true);
-
-  // Equal priority native work doesn't preempt posted tasks.
-  native_work = sequence_manager()->OnNativeWorkPending(
-      TaskQueue::QueuePriority::kNormalPriority);
-  queue->task_runner()->PostTask(FROM_HERE, task.Get());
-  CheckPostedTaskRan(true);
-
-  // When there are multiple priorities of native work, only the highest
-  // priority matters.
-  native_work = sequence_manager()->OnNativeWorkPending(
-      TaskQueue::QueuePriority::kNormalPriority);
-  auto native_work_high = sequence_manager()->OnNativeWorkPending(
-      TaskQueue::QueuePriority::kHighPriority);
-  auto native_work_low = sequence_manager()->OnNativeWorkPending(
-      TaskQueue::QueuePriority::kLowPriority);
-  queue->task_runner()->PostTask(FROM_HERE, task.Get());
-  CheckPostedTaskRan(false);
-  native_work.reset();
-  CheckPostedTaskRan(false);
-  native_work_high.reset();
-  CheckPostedTaskRan(true);
-}
-
 namespace {
 
 class TaskObserverExpectingNoDelayedRunTime : public TaskObserver {
@@ -5550,15 +5478,16 @@ TEST(SequenceManagerTest,
       sequence_manager::CreateSequenceManagerOnCurrentThreadWithPump(
           MessagePump::Create(MessagePumpType::DEFAULT));
   auto queue = sequence_manager->CreateTaskQueue(
-      sequence_manager::TaskQueue::Spec("default_tq"));
+      sequence_manager::TaskQueue::Spec(QueueName::DEFAULT_TQ));
   sequence_manager->SetDefaultTaskRunner(queue->task_runner());
 
   scoped_refptr<SingleThreadTaskRunner> expected_task_runner =
-      ThreadTaskRunnerHandle::Get();
+      SingleThreadTaskRunner::GetCurrentDefault();
 
   StrictMock<MockCallback<base::OnceCallback<void()>>> cb;
   EXPECT_CALL(cb, Run).WillOnce(testing::Invoke([expected_task_runner]() {
-    EXPECT_EQ(ThreadTaskRunnerHandle::Get(), expected_task_runner);
+    EXPECT_EQ(SingleThreadTaskRunner::GetCurrentDefault(),
+              expected_task_runner);
   }));
 
   static base::SequenceLocalStorageSlot<std::unique_ptr<DestructionCallback>>

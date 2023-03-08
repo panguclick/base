@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -99,7 +99,6 @@ bool ThreadGroup::IsBoundToCurrentThread() const {
 
 void ThreadGroup::Start() {
   CheckedAutoLock auto_lock(lock_);
-  disable_fair_scheduling_ = FeatureList::IsEnabled(kDisableFairJobScheduling);
 }
 
 size_t
@@ -162,20 +161,26 @@ void ThreadGroup::ReEnqueueTaskSourceLockRequired(
   ThreadGroup* destination_thread_group = delegate_->GetThreadGroupForTraits(
       transaction_with_task_source.transaction.traits());
 
+  bool push_to_immediate_queue =
+      transaction_with_task_source.task_source.WillReEnqueue(
+          TimeTicks::Now(), &transaction_with_task_source.transaction);
+
   if (destination_thread_group == this) {
     // Another worker that was running a task from this task source may have
     // reenqueued it already, in which case its heap_handle will be valid. It
     // shouldn't be queued twice so the task source registration is released.
-    if (transaction_with_task_source.task_source->heap_handle().IsValid()) {
+    if (transaction_with_task_source.task_source->immediate_heap_handle()
+            .IsValid()) {
       workers_executor->ScheduleReleaseTaskSource(
           std::move(transaction_with_task_source.task_source));
     } else {
       // If the TaskSource should be reenqueued in the current thread group,
       // reenqueue it inside the scope of the lock.
-      auto sort_key = transaction_with_task_source.task_source->GetSortKey(
-          disable_fair_scheduling_);
-      priority_queue_.Push(std::move(transaction_with_task_source.task_source),
-                           sort_key);
+      auto sort_key = transaction_with_task_source.task_source->GetSortKey();
+      if (push_to_immediate_queue) {
+        priority_queue_.Push(
+            std::move(transaction_with_task_source.task_source), sort_key);
+      }
     }
     // This is called unconditionally to ensure there are always workers to run
     // task sources in the queue. Some ThreadGroup implementations only invoke
@@ -218,19 +223,15 @@ RegisteredTaskSource ThreadGroup::TakeRegisteredTaskSource(
     return priority_queue_.PopTaskSource();
   // Replace the top task_source and then update the queue.
   std::swap(priority_queue_.PeekTaskSource(), task_source);
-  if (!disable_fair_scheduling_) {
-    priority_queue_.UpdateSortKey(*task_source.get(),
-                                  task_source->GetSortKey(false));
-  }
+  priority_queue_.UpdateSortKey(*task_source.get(), task_source->GetSortKey());
   return task_source;
 }
 
 void ThreadGroup::UpdateSortKeyImpl(BaseScopedCommandsExecutor* executor,
                                     TaskSource::Transaction transaction) {
   CheckedAutoLock auto_lock(lock_);
-  priority_queue_.UpdateSortKey(
-      *transaction.task_source(),
-      transaction.task_source()->GetSortKey(disable_fair_scheduling_));
+  priority_queue_.UpdateSortKey(*transaction.task_source(),
+                                transaction.task_source()->GetSortKey());
   EnsureEnoughWorkersLockRequired(executor);
 }
 
@@ -242,15 +243,15 @@ void ThreadGroup::PushTaskSourceAndWakeUpWorkersImpl(
   DCHECK_EQ(delegate_->GetThreadGroupForTraits(
                 transaction_with_task_source.transaction.traits()),
             this);
-  if (transaction_with_task_source.task_source->heap_handle().IsValid()) {
+  if (transaction_with_task_source.task_source->immediate_heap_handle()
+          .IsValid()) {
     // If the task source changed group, it is possible that multiple concurrent
     // workers try to enqueue it. Only the first enqueue should succeed.
     executor->ScheduleReleaseTaskSource(
         std::move(transaction_with_task_source.task_source));
     return;
   }
-  auto sort_key = transaction_with_task_source.task_source->GetSortKey(
-      disable_fair_scheduling_);
+  auto sort_key = transaction_with_task_source.task_source->GetSortKey();
   priority_queue_.Push(std::move(transaction_with_task_source.task_source),
                        sort_key);
   EnsureEnoughWorkersLockRequired(executor);
@@ -263,6 +264,27 @@ void ThreadGroup::InvalidateAndHandoffAllTaskSourcesToOtherThreadGroup(
       destination_thread_group->lock_);
   destination_thread_group->priority_queue_ = std::move(priority_queue_);
   replacement_thread_group_ = destination_thread_group;
+}
+
+void ThreadGroup::HandoffNonUserBlockingTaskSourcesToOtherThreadGroup(
+    ThreadGroup* destination_thread_group) {
+  CheckedAutoLock current_thread_group_lock(lock_);
+  CheckedAutoLock destination_thread_group_lock(
+      destination_thread_group->lock_);
+  PriorityQueue new_priority_queue;
+  TaskSourceSortKey top_sort_key;
+  // This works because all USER_BLOCKING tasks are at the front of the queue.
+  while (!priority_queue_.IsEmpty() &&
+         (top_sort_key = priority_queue_.PeekSortKey()).priority() ==
+             TaskPriority::USER_BLOCKING) {
+    new_priority_queue.Push(priority_queue_.PopTaskSource(), top_sort_key);
+  }
+  while (!priority_queue_.IsEmpty()) {
+    top_sort_key = priority_queue_.PeekSortKey();
+    destination_thread_group->priority_queue_.Push(
+        priority_queue_.PopTaskSource(), top_sort_key);
+  }
+  priority_queue_ = std::move(new_priority_queue);
 }
 
 bool ThreadGroup::ShouldYield(TaskSourceSortKey sort_key) {
@@ -323,6 +345,11 @@ ThreadGroup::GetScopedWindowsThreadEnvironment(WorkerEnvironment environment) {
   return scoped_environment;
 }
 #endif
+
+// static
+bool ThreadGroup::CurrentThreadHasGroup() {
+  return GetCurrentThreadGroup() != nullptr;
+}
 
 }  // namespace internal
 }  // namespace base

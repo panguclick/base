@@ -1,4 +1,4 @@
-// Copyright (c) 2010 The Chromium Authors. All rights reserved.
+// Copyright 2010 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -114,6 +114,20 @@ void VlogInfo::SetMaxVlogLevel(int level) {
 
 int VlogInfo::GetMaxVlogLevel() const {
   return -*min_log_level_;
+}
+
+VlogInfo::VlogInfo(std::vector<VmodulePattern> vmodule_levels,
+                   int* min_log_level)
+    : vmodule_levels_(std::move(vmodule_levels)),
+      min_log_level_(min_log_level) {}
+
+VlogInfo* VlogInfo::WithSwitches(const std::string& vmodule_switch) const {
+  std::vector<VmodulePattern> vmodule_levels = vmodule_levels_;
+  std::vector<VmodulePattern> additional_vmodule_levels =
+      ParseVmoduleLevels(vmodule_switch);
+  vmodule_levels.insert(vmodule_levels.end(), additional_vmodule_levels.begin(),
+                        additional_vmodule_levels.end());
+  return new VlogInfo(std::move(vmodule_levels), min_log_level_);
 }
 
 bool MatchVlogPattern(base::StringPiece string,

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -270,12 +270,12 @@ void HistogramSamples::RecordNegativeSample(NegativeSampleReason reason,
                      static_cast<int32_t>(id()));
 }
 
-base::Value HistogramSamples::ToGraphDict(StringPiece histogram_name,
-                                          int32_t flags) const {
-  base::Value dict(base::Value::Type::DICTIONARY);
-  dict.SetStringKey("name", histogram_name);
-  dict.SetStringKey("header", GetAsciiHeader(histogram_name, flags));
-  dict.SetStringKey("body", GetAsciiBody());
+base::Value::Dict HistogramSamples::ToGraphDict(StringPiece histogram_name,
+                                                int32_t flags) const {
+  base::Value::Dict dict;
+  dict.Set("name", histogram_name);
+  dict.Set("header", GetAsciiHeader(histogram_name, flags));
+  dict.Set("body", GetAsciiBody());
   return dict;
 }
 

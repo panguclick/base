@@ -1,14 +1,10 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 package org.chromium.base.test.util;
 
 import android.app.Activity;
-import android.content.Context;
-import android.content.Intent;
-import android.os.Build;
-import android.provider.Settings;
 import android.support.test.runner.lifecycle.ActivityLifecycleCallback;
 import android.support.test.runner.lifecycle.ActivityLifecycleMonitor;
 import android.support.test.runner.lifecycle.ActivityLifecycleMonitorRegistry;
@@ -33,7 +29,9 @@ public class ApplicationTestUtils {
 
     /** Waits until the given activity transitions to the given state. */
     public static void waitForActivityState(Activity activity, Stage stage) {
-        waitForActivityState(null, activity, stage);
+        waitForActivityState("Activity " + activity.getLocalClassName()
+                        + " did not reach stage: " + stage + ". Is the device screen turned on?",
+                activity, stage);
     }
 
     /** Waits until the given activity transitions to the given state. */
@@ -52,30 +50,7 @@ public class ApplicationTestUtils {
         });
         final String error = "Failed to finish the Activity. Did you start a second Activity and "
                 + "not finish it?";
-        try {
-            waitForActivityState(error, activity, Stage.DESTROYED);
-        } catch (Throwable e) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) throw e;
-
-            // On L, there's a framework bug where Activities sometimes just don't get finished
-            // unless you start another Activity.
-            Intent intent = new Intent(Settings.ACTION_SETTINGS);
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            activity.startActivity(intent);
-            try {
-                waitForActivityState(error, activity, Stage.DESTROYED);
-            } finally {
-                // We can't finish com.android.settings, so return to launcher instead.
-                fireHomescreenIntent(activity);
-            }
-        }
-    }
-
-    private static void fireHomescreenIntent(Context context) {
-        Intent intent = new Intent(Intent.ACTION_MAIN);
-        intent.addCategory(Intent.CATEGORY_HOME);
-        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        context.startActivity(intent);
+        waitForActivityState(error, activity, Stage.DESTROYED);
     }
 
     /**

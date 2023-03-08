@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 
 #include <inttypes.h>
 
+#include "base/check.h"
 #include "base/pickle.h"
 #include "base/rand_util.h"
 #include "base/strings/stringprintf.h"
@@ -20,6 +21,9 @@ Token Token::CreateRandom() {
   // Use base::RandBytes instead of crypto::RandBytes, because crypto calls the
   // base version directly, and to prevent the dependency from base/ to crypto/.
   base::RandBytes(&token, sizeof(token));
+
+  CHECK(!token.is_zero());
+
   return token;
 }
 
@@ -33,16 +37,16 @@ absl::optional<Token> Token::FromString(StringPiece string_representation) {
     return absl::nullopt;
   }
   uint64_t words[2];
-  for (int i = 0; i < 2; i++) {
+  for (size_t i = 0; i < 2; i++) {
     uint64_t word = 0;
     // This j loop is similar to HexStringToUInt64 but we are intentionally
     // strict about case, accepting 'A' but rejecting 'a'.
-    for (int j = 0; j < 16; j++) {
+    for (size_t j = 0; j < 16; j++) {
       const char c = string_representation[(16 * i) + j];
       if (('0' <= c) && (c <= '9')) {
-        word = (word << 4) | (c - '0');
+        word = (word << 4) | static_cast<uint64_t>(c - '0');
       } else if (('A' <= c) && (c <= 'F')) {
-        word = (word << 4) | (c - 'A' + 10);
+        word = (word << 4) | static_cast<uint64_t>(c - 'A' + 10);
       } else {
         return absl::nullopt;
       }

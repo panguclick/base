@@ -1,4 +1,4 @@
-// Copyright (c) 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,17 +12,24 @@
 
 #include <sys/mman.h>
 
-#include "base/allocator/buildflags.h"
 #include "base/allocator/partition_allocator/oom.h"
 #include "base/allocator/partition_allocator/page_allocator.h"
+#include "base/allocator/partition_allocator/partition_alloc_base/debug/debugging_buildflags.h"
 #include "base/allocator/partition_allocator/partition_alloc_base/posix/eintr_wrapper.h"
 #include "base/allocator/partition_allocator/partition_alloc_check.h"
+#include "base/allocator/partition_allocator/pkey.h"
 #include "build/build_config.h"
 
 #if BUILDFLAG(IS_APPLE)
+#include "base/allocator/partition_allocator/partition_alloc_base/mac/foundation_util.h"
+#if BUILDFLAG(IS_IOS)
+#include "base/allocator/partition_allocator/partition_alloc_base/ios/ios_util.h"
+#elif BUILDFLAG(IS_MAC)
 #include "base/allocator/partition_allocator/partition_alloc_base/mac/mac_util.h"
+#else
+#error "Unknown platform"
+#endif
 #include "base/allocator/partition_allocator/partition_alloc_base/mac/scoped_cftyperef.h"
-#include "base/mac/foundation_util.h"
 
 #include <Availability.h>
 #include <Security/Security.h>
@@ -142,15 +149,18 @@ int GetAccessFlags(PageAccessibilityConfiguration accessibility);
 uintptr_t SystemAllocPagesInternal(uintptr_t hint,
                                    size_t length,
                                    PageAccessibilityConfiguration accessibility,
-                                   PageTag page_tag) {
+                                   PageTag page_tag,
+                                   int file_descriptor_for_shared_alloc) {
 #if BUILDFLAG(IS_APPLE)
   // Use a custom tag to make it easier to distinguish Partition Alloc regions
   // in vmmap(1). Tags between 240-255 are supported.
   PA_DCHECK(PageTag::kFirst <= page_tag);
   PA_DCHECK(PageTag::kLast >= page_tag);
-  int fd = VM_MAKE_TAG(static_cast<int>(page_tag));
+  int fd = file_descriptor_for_shared_alloc == -1
+               ? VM_MAKE_TAG(static_cast<int>(page_tag))
+               : file_descriptor_for_shared_alloc;
 #else
-  int fd = -1;
+  int fd = file_descriptor_for_shared_alloc;
 #endif
 
   int access_flag = GetAccessFlags(accessibility);
@@ -191,8 +201,14 @@ bool TrySetSystemPagesAccessInternal(
     uintptr_t address,
     size_t length,
     PageAccessibilityConfiguration accessibility) {
+#if BUILDFLAG(ENABLE_PKEYS)
+  return 0 == PkeyMprotectIfEnabled(reinterpret_cast<void*>(address), length,
+                                    GetAccessFlags(accessibility),
+                                    accessibility.pkey);
+#else
   return 0 == PA_HANDLE_EINTR(mprotect(reinterpret_cast<void*>(address), length,
                                        GetAccessFlags(accessibility)));
+#endif
 }
 
 void SetSystemPagesAccessInternal(
@@ -200,8 +216,14 @@ void SetSystemPagesAccessInternal(
     size_t length,
     PageAccessibilityConfiguration accessibility) {
   int access_flags = GetAccessFlags(accessibility);
-  const int ret = PA_HANDLE_EINTR(
-      mprotect(reinterpret_cast<void*>(address), length, access_flags));
+#if BUILDFLAG(ENABLE_PKEYS)
+  int ret =
+      PkeyMprotectIfEnabled(reinterpret_cast<void*>(address), length,
+                            GetAccessFlags(accessibility), accessibility.pkey);
+#else
+  int ret = PA_HANDLE_EINTR(mprotect(reinterpret_cast<void*>(address), length,
+                                     GetAccessFlags(accessibility)));
+#endif
 
   // On Linux, man mprotect(2) states that ENOMEM is returned when (1) internal
   // kernel data structures cannot be allocated, (2) the address range is
@@ -284,7 +306,8 @@ void DecommitSystemPagesInternal(
   // crbug.com/1153021).
   if (change_permissions) {
     SetSystemPagesAccess(address, length,
-                         PageAccessibilityConfiguration::kInaccessible);
+                         PageAccessibilityConfiguration(
+                             PageAccessibilityConfiguration::kInaccessible));
   }
 }
 
@@ -346,6 +369,7 @@ bool TryRecommitSystemPagesInternal(
 }
 
 void DiscardSystemPagesInternal(uintptr_t address, size_t length) {
+#if !BUILDFLAG(IS_NACL)
   void* ptr = reinterpret_cast<void*>(address);
 #if BUILDFLAG(IS_APPLE)
   int ret = madvise(ptr, length, MADV_FREE_REUSABLE);
@@ -363,6 +387,7 @@ void DiscardSystemPagesInternal(uintptr_t address, size_t length) {
   // Therefore, we just do the simple thing: MADV_DONTNEED.
   PA_PCHECK(0 == madvise(ptr, length, MADV_DONTNEED));
 #endif
+#endif  // !BUILDFLAG(IS_NACL)
 }
 
 }  // namespace partition_alloc::internal

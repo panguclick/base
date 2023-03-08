@@ -8,36 +8,74 @@ set(BASE_TARGET_NAME "base")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_VERBOSE_MAKEFILEON ON)
 ADD_DEFINITIONS(-DUNICODE)
 ADD_DEFINITIONS(-D_UNICODE)
 ADD_DEFINITIONS(-DNOMINMAX)
 
-# set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17")
-message(STATUS *******************************************************)
-message(STATUS CMAKE_SYSTEM_NAME=${CMAKE_SYSTEM_NAME})
-message(STATUS CMAKE_SYSTEM_VERSION=${CMAKE_SYSTEM_VERSION})
-message(STATUS CMAKE_HOST_SYSTEM_NAME=${CMAKE_HOST_SYSTEM_NAME})
-message(STATUS CMAKE_GENERATOR=${CMAKE_GENERATOR})
-message(STATUS CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE})
-message(STATUS CMAKE_CONFIGURATION_TYPES=${CMAKE_CONFIGURATION_TYPES})
-message(STATUS CMAKE_C_COMPILER=${CMAKE_C_COMPILER})
-message(STATUS CMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER})
-message(STATUS CMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES=${CMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES})
-message(STATUS CMAKE_CXX_STANDARD_LIBRARIES=${CMAKE_CXX_STANDARD_LIBRARIES})
-message(STATUS CMAKE_C_FLAGS=${CMAKE_C_FLAGS})
-message(STATUS CMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS})
-message(STATUS CMAKE_SHARED_LINKER_FLAGS=${CMAKE_SHARED_LINKER_FLAGS})
-message(STATUS CMAKE_MODULE_LINKER_FLAGS=${CMAKE_MODULE_LINKER_FLAGS})
-message(STATUS CMAKE_EXE_LINKER_FLAGS=${CMAKE_EXE_LINKER_FLAGS})
-message(STATUS CMAKE_BINARY_DIR=${CMAKE_BINARY_DIR})
-message(STATUS CMAKE_SOURCE_DIR=${CMAKE_SOURCE_DIR})
-message(STATUS CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE})
-message(STATUS CMAKE_SYSTEM_NAME=${CMAKE_SYSTEM_NAME})
-message(STATUS CMAKE_FIND_LIBRARY_SUFFIXES=${CMAKE_FIND_LIBRARY_SUFFIXES})
-message(STATUS CMAKE_STATIC_LIBRARY_PREFIX=${CMAKE_STATIC_LIBRARY_PREFIX})
-message(STATUS *******************************************************)
+# create build headers
+add_subdirectory(build)
 
-set(BASE_PLATFORM_SOURCE)
+# include build headers
+include_directories(
+    ${PROJECT_BINARY_DIR}/gen
+)
+
+# message(STATUS *******************************************************)
+# message(STATUS CMAKE_SYSTEM_NAME=${CMAKE_SYSTEM_NAME})
+# message(STATUS CMAKE_SYSTEM_VERSION=${CMAKE_SYSTEM_VERSION})
+# message(STATUS CMAKE_HOST_SYSTEM_NAME=${CMAKE_HOST_SYSTEM_NAME})
+# message(STATUS CMAKE_GENERATOR=${CMAKE_GENERATOR})
+# message(STATUS CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE})
+# message(STATUS CMAKE_CONFIGURATION_TYPES=${CMAKE_CONFIGURATION_TYPES})
+# message(STATUS CMAKE_C_COMPILER=${CMAKE_C_COMPILER})
+# message(STATUS CMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER})
+# message(STATUS CMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES=${CMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES})
+# message(STATUS CMAKE_CXX_STANDARD_LIBRARIES=${CMAKE_CXX_STANDARD_LIBRARIES})
+# message(STATUS CMAKE_C_FLAGS=${CMAKE_C_FLAGS})
+# message(STATUS CMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS})
+# message(STATUS CMAKE_SHARED_LINKER_FLAGS=${CMAKE_SHARED_LINKER_FLAGS})
+# message(STATUS CMAKE_MODULE_LINKER_FLAGS=${CMAKE_MODULE_LINKER_FLAGS})
+# message(STATUS CMAKE_EXE_LINKER_FLAGS=${CMAKE_EXE_LINKER_FLAGS})
+# message(STATUS CMAKE_BINARY_DIR=${CMAKE_BINARY_DIR})
+# message(STATUS CMAKE_SOURCE_DIR=${CMAKE_SOURCE_DIR})
+# message(STATUS CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE})
+# message(STATUS CMAKE_SYSTEM_NAME=${CMAKE_SYSTEM_NAME})
+# message(STATUS CMAKE_FIND_LIBRARY_SUFFIXES=${CMAKE_FIND_LIBRARY_SUFFIXES})
+# message(STATUS CMAKE_STATIC_LIBRARY_PREFIX=${CMAKE_STATIC_LIBRARY_PREFIX})
+# message(STATUS *******************************************************)
+
+# #定义延迟加载的宏
+MACRO(ADD_DELAYLOAD_FLAGS flagsVar)
+    SET(dlls "${ARGN}")
+
+    FOREACH(dll ${dlls})
+        SET(${flagsVar} "${${flagsVar}} /DELAYLOAD:${dll}.dll")
+    ENDFOREACH()
+ENDMACRO()
+
+set(is_debug ON)
+
+if(CMAKE_BUILD_TYPE MATCHES "Debug" OR CMAKE_BUILD_TYPE EQUAL "None" OR NOT CMAKE_BUILD_TYPE)
+    message(STATUS "----- CMAKE_BUILD_TYPE is Debug")
+elseif(CMAKE_BUILD_TYPE MATCHES "Release")
+    message(STATUS "----- CMAKE_BUILD_TYPE is Release")
+    set(is_debug OFF)
+elseif(CMAKE_BUILD_TYPE MATCHES "RelWitchDebInfo")
+    message(STATUS "----- CMAKE_BUILD_TYPE is RelWitchDebInfo")
+    set(is_debug OFF)
+elseif(CMAKE_BUILD_TYPE MATCHES "MinSizeRel")
+    message(STATUS "----- CMAKE_BUILD_TYPE is MinSizeRel")
+    set(is_debug OFF)
+else()
+    message(STATUS "----- unknown CMAKE_BUILD_TYPE = " ${CMAKE_BUILD_TYPE})
+endif()
+
+if(WIN32)
+    set(is_win ON)
+endif()
+
+set(sources)
 set(BASE_PLATFORM_DEFINITIONS)
 set(BASE_LINK_PLATFORM_LIBRARIES)
 set(BASE_INCLUDE_PLATFORM_DIRECTORIES)
@@ -47,7 +85,6 @@ set(BASE_INCLUDE_DIRECTORIES
     ..
     ../third_party/abseil-cpp
     ./third_party/boringssl/src/include
-    ./build
 )
 
 set(BASE_LINK_DIRECTORIES
@@ -58,12 +95,53 @@ set(BASE_DEFINITIONS
     ${BASE_PLATFORM_DEFINITIONS}
 )
 
-set(BASE_SOURCE
+# config
+add_definitions(-DBASE_IMPLEMENTATION -DIS_RAW_PTR_IMPL)
+
+if(is_win)
+    ADD_DELAYLOAD_FLAGS(
+        CMAKE_EXE_LINKER_FLAGS
+        cfgmgr32
+        powrprof
+        setupapi
+    )
+
+    link_directories(
+        cfgmgr32.lib
+        powrprof.lib
+        propsys.lib
+        setupapi.lib
+        userenv.lib
+        wbemuuid.lib
+        winmm.lib
+    )
+
+    add_definitions(-D_ITERATOR_DEBUG_LEVEL=0)
+    add_compile_definitions($<$<CONFIG:Debug>:CMAKE_BUILD_TYPE=Debug>)
+    add_compile_definitions($<$<CONFIG:Release>:DCMAKE_BUILD_TYPE=Release>)
+
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MT")
+    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MTd")
+endif()
+
+set(sources
     allocator/allocator_check.cc
     allocator/allocator_check.h
     allocator/allocator_extension.cc
     allocator/allocator_extension.h
-    as_const.h
+    allocator/dispatcher/configuration.h
+    allocator/dispatcher/dispatcher.cc
+    allocator/dispatcher/dispatcher.h
+    allocator/dispatcher/initializer.h
+    allocator/dispatcher/internal/dispatch_data.cc
+    allocator/dispatcher/internal/dispatch_data.h
+    allocator/dispatcher/internal/dispatcher_internal.h
+    allocator/dispatcher/internal/tools.h
+    allocator/dispatcher/reentry_guard.cc
+    allocator/dispatcher/reentry_guard.h
+    allocator/dispatcher/subsystem.h
+    allocator/dispatcher/tls.cc
+    allocator/dispatcher/tls.h
     at_exit.cc
     at_exit.h
     atomic_ref_count.h
@@ -79,27 +157,25 @@ set(BASE_SOURCE
     base64.h
     base64url.cc
     base64url.h
-    base_export.h
     base_switches.h
     big_endian.cc
     big_endian.h
     bind.h
-    bind_internal.h
     bit_cast.h
     bits.h
     build_time.cc
     build_time.h
     callback.h
     callback_forward.h
-    callback_helpers.cc
     callback_helpers.h
-    callback_internal.cc
-    callback_internal.h
     callback_list.cc
     callback_list.h
     cancelable_callback.h
     check.cc
     check.h
+    check_deref.h
+    check_is_test.cc
+    check_is_test.h
     check_op.cc
     check_op.h
     command_line.cc
@@ -109,7 +185,6 @@ set(BASE_SOURCE
     containers/adapters.h
     containers/buffer_iterator.h
     containers/checked_iterators.h
-    containers/checked_range.h
     containers/circular_deque.h
     containers/contains.h
     containers/contiguous_iterator.h
@@ -140,6 +215,7 @@ set(BASE_SOURCE
     containers/lru_cache.h
     containers/small_map.h
     containers/span.h
+    containers/span_rust.h
     containers/stack.h
     containers/stack_container.h
     containers/unique_ptr_adapters.h
@@ -151,6 +227,7 @@ set(BASE_SOURCE
     cpu_reduction_experiment.h
     critical_closure.h
     cxx17_backports.h
+    cxx20_is_constant_evaluated.h
     cxx20_to_address.h
     dcheck_is_on.h
     debug/activity_analyzer.cc
@@ -185,6 +262,8 @@ set(BASE_SOURCE
     feature_list.h
     features.cc
     features.h
+    file_descriptor_store.cc
+    file_descriptor_store.h
     file_version_info.h
     files/dir_reader_fallback.h
     files/file.cc
@@ -216,9 +295,22 @@ set(BASE_SOURCE
     files/scoped_temp_dir.cc
     files/scoped_temp_dir.h
     format_macros.h
+    functional/bind.h
+    functional/bind_internal.h
+    functional/callback.h
+    functional/callback_forward.h
+    functional/callback_helpers.cc
+    functional/callback_helpers.h
+    functional/callback_internal.cc
+    functional/callback_internal.h
+    functional/callback_tags.h
+    functional/disallow_unretained.h
+    functional/function_ref.h
     functional/identity.h
     functional/invoke.h
     functional/not_fn.h
+    functional/overloaded.h
+    functional/unretained_traits.h
     gtest_prod_util.h
     guid.cc
     guid.h
@@ -226,7 +318,6 @@ set(BASE_SOURCE
     hash/hash.h
     hash/legacy_hash.cc
     hash/legacy_hash.h
-    immediate_crash.h
     json/json_common.h
     json/json_file_value_serializer.cc
     json/json_file_value_serializer.h
@@ -247,6 +338,8 @@ set(BASE_SOURCE
     lazy_instance.h
     lazy_instance_helpers.cc
     lazy_instance_helpers.h
+    linux_util.cc
+    linux_util.h
     location.cc
     location.h
     logging.cc
@@ -276,9 +369,12 @@ set(BASE_SOURCE
     memory/ptr_util.h
     memory/raw_ptr.cc
     memory/raw_ptr.h
+    memory/raw_ptr_asan_bound_arg_tracker.cc
+    memory/raw_ptr_asan_bound_arg_tracker.h
     memory/raw_ptr_asan_service.cc
     memory/raw_ptr_asan_service.h
     memory/raw_ptr_exclusion.h
+    memory/raw_ref.h
     memory/raw_scoped_refptr_mismatch_checker.h
     memory/read_only_shared_memory_region.cc
     memory/read_only_shared_memory_region.h
@@ -316,6 +412,8 @@ set(BASE_SOURCE
     message_loop/message_pump_default.h
     message_loop/message_pump_for_io.h
     message_loop/message_pump_for_ui.h
+    message_loop/message_pump_glib.cc
+    message_loop/message_pump_glib.h
     message_loop/message_pump_type.h
     message_loop/timer_slack.h
     message_loop/work_id_provider.cc
@@ -375,7 +473,6 @@ set(BASE_SOURCE
     native_library.cc
     native_library.h
     no_destructor.h
-    notreached.cc
     notreached.h
     observer_list.h
     observer_list_internal.cc
@@ -386,8 +483,8 @@ set(BASE_SOURCE
     observer_list_types.h
     one_shot_event.cc
     one_shot_event.h
-    # os_compat_nacl.cc
-    # os_compat_nacl.h
+    os_compat_nacl.cc
+    os_compat_nacl.h
     parameter_pack.h
     path_service.cc
     path_service.h
@@ -395,15 +492,28 @@ set(BASE_SOURCE
     pending_task.h
     pickle.cc
     pickle.h
+    power_monitor/battery_level_provider.cc
+    power_monitor/battery_level_provider.h
+    power_monitor/battery_state_sampler.cc
+    power_monitor/battery_state_sampler.h
     power_monitor/moving_average.cc
     power_monitor/moving_average.h
     power_monitor/power_monitor.cc
     power_monitor/power_monitor.h
     power_monitor/power_monitor_device_source.cc
     power_monitor/power_monitor_device_source.h
+    power_monitor/power_monitor_features.cc
+    power_monitor/power_monitor_features.h
     power_monitor/power_monitor_source.cc
     power_monitor/power_monitor_source.h
     power_monitor/power_observer.h
+    power_monitor/sampling_event_source.cc
+    power_monitor/sampling_event_source.h
+    power_monitor/timer_sampling_event_source.cc
+    power_monitor/timer_sampling_event_source.h
+    process/current_process.cc
+    process/current_process.h
+    process/current_process_test.h
     process/environment_internal.cc
     process/environment_internal.h
     process/kill.cc
@@ -421,15 +531,12 @@ set(BASE_SOURCE
     process/process_metrics.cc
     process/process_metrics.h
     process/process_metrics_iocounters.h
-    profiler/arm_cfi_table.cc
-    profiler/arm_cfi_table.h
     profiler/frame.cc
     profiler/frame.h
     profiler/metadata_recorder.cc
     profiler/metadata_recorder.h
     profiler/module_cache.cc
     profiler/module_cache.h
-    profiler/native_unwinder.h
     profiler/profile_builder.h
     profiler/register_context.h
     profiler/sample_metadata.cc
@@ -444,8 +551,6 @@ set(BASE_SOURCE
     profiler/stack_copier_suspend.h
     profiler/stack_sampler.cc
     profiler/stack_sampler.h
-    profiler/stack_sampler_impl.cc
-    profiler/stack_sampler_impl.h
     profiler/stack_sampling_profiler.cc
     profiler/stack_sampling_profiler.h
     profiler/suspendable_thread_delegate.h
@@ -454,7 +559,7 @@ set(BASE_SOURCE
     profiler/unwinder.h
     rand_util.cc
     rand_util.h
-    # rand_util_nacl.cc
+    rand_util_nacl.cc
     ranges/algorithm.h
     ranges/functional.h
     ranges/ranges.h
@@ -466,6 +571,8 @@ set(BASE_SOURCE
     sampling_heap_profiler/poisson_allocation_sampler.h
     sampling_heap_profiler/sampling_heap_profiler.cc
     sampling_heap_profiler/sampling_heap_profiler.h
+    scoped_add_feature_flags.cc
+    scoped_add_feature_flags.h
     scoped_clear_last_error.h
     scoped_environment_variable_override.cc
     scoped_environment_variable_override.h
@@ -474,12 +581,15 @@ set(BASE_SOURCE
     scoped_native_library.cc
     scoped_native_library.h
     scoped_observation.h
+    scoped_observation_traits.h
+    scoped_observation_traits_internal.h
     sequence_checker.cc
     sequence_checker.h
     sequence_checker_impl.cc
     sequence_checker_impl.h
     sequence_token.cc
     sequence_token.h
+    state_transitions.h
     stl_util.h
     strings/abseil_string_conversions.cc
     strings/abseil_string_conversions.h
@@ -502,6 +612,7 @@ set(BASE_SOURCE
     strings/string_piece.cc
     strings/string_piece.h
     strings/string_piece_forward.h
+    strings/string_piece_rust.h
     strings/string_split.cc
     strings/string_split.h
     strings/string_split_internal.h
@@ -509,6 +620,7 @@ set(BASE_SOURCE
     strings/string_util.cc
     strings/string_util.h
     strings/string_util_constants.cc
+    strings/string_util_impl_helpers.h
     strings/string_util_internal.h
     strings/stringize_macros.h
     strings/stringprintf.cc
@@ -534,6 +646,7 @@ set(BASE_SOURCE
     synchronization/lock.cc
     synchronization/lock.h
     synchronization/lock_impl.h
+    synchronization/waitable_event.cc
     synchronization/waitable_event.h
     synchronization/waitable_event_watcher.h
     sys_byteorder.h
@@ -551,6 +664,8 @@ set(BASE_SOURCE
     task/common/checked_lock.h
     task/common/checked_lock_impl.cc
     task/common/checked_lock_impl.h
+    task/common/lazy_now.cc
+    task/common/lazy_now.h
     task/common/operations_controller.cc
     task/common/operations_controller.h
     task/common/scoped_defer_task_posting.cc
@@ -584,9 +699,9 @@ set(BASE_SOURCE
     task/sequence_manager/enqueue_order_generator.h
     task/sequence_manager/fence.cc
     task/sequence_manager/fence.h
+    task/sequence_manager/hierarchical_timing_wheel.cc
+    task/sequence_manager/hierarchical_timing_wheel.h
     task/sequence_manager/lazily_deallocated_deque.h
-    task/sequence_manager/lazy_now.cc
-    task/sequence_manager/lazy_now.h
     task/sequence_manager/sequence_manager.cc
     task/sequence_manager/sequence_manager.h
     task/sequence_manager/sequence_manager_impl.cc
@@ -601,7 +716,6 @@ set(BASE_SOURCE
     task/sequence_manager/task_queue_impl.h
     task/sequence_manager/task_queue_selector.cc
     task/sequence_manager/task_queue_selector.h
-    task/sequence_manager/task_queue_selector_logic.h
     task/sequence_manager/task_time_observer.h
     task/sequence_manager/tasks.cc
     task/sequence_manager/tasks.h
@@ -615,6 +729,8 @@ set(BASE_SOURCE
     task/sequence_manager/thread_controller_with_message_pump_impl.h
     task/sequence_manager/time_domain.cc
     task/sequence_manager/time_domain.h
+    task/sequence_manager/timing_wheel.cc
+    task/sequence_manager/timing_wheel.h
     task/sequence_manager/wake_up_queue.cc
     task/sequence_manager/wake_up_queue.h
     task/sequence_manager/work_deduplicator.cc
@@ -630,6 +746,7 @@ set(BASE_SOURCE
     task/simple_task_executor.h
     task/single_thread_task_executor.cc
     task/single_thread_task_executor.h
+    task/single_thread_task_runner.cc
     task/single_thread_task_runner.h
     task/single_thread_task_runner_thread_mode.h
     task/task_executor.cc
@@ -639,12 +756,13 @@ set(BASE_SOURCE
     task/task_observer.h
     task/task_runner.cc
     task/task_runner.h
-    task/task_runner_util.h
     task/task_traits.cc
     task/task_traits.h
     task/task_traits_extension.h
     task/thread_pool.cc
     task/thread_pool.h
+    task/thread_pool/delayed_priority_queue.cc
+    task/thread_pool/delayed_priority_queue.h
     task/thread_pool/delayed_task_manager.cc
     task/thread_pool/delayed_task_manager.h
     task/thread_pool/environment_config.cc
@@ -679,8 +797,6 @@ set(BASE_SOURCE
     task/thread_pool/thread_group.h
     task/thread_pool/thread_group_impl.cc
     task/thread_pool/thread_group_impl.h
-    task/thread_pool/thread_group_native.cc
-    task/thread_pool/thread_group_native.h
     task/thread_pool/thread_pool_impl.cc
     task/thread_pool/thread_pool_impl.h
     task/thread_pool/thread_pool_instance.cc
@@ -689,8 +805,8 @@ set(BASE_SOURCE
     task/thread_pool/worker_thread.cc
     task/thread_pool/worker_thread.h
     task/thread_pool/worker_thread_observer.h
-    task/thread_pool/worker_thread_stack.cc
-    task/thread_pool/worker_thread_stack.h
+    task/thread_pool/worker_thread_set.cc
+    task/thread_pool/worker_thread_set.h
     task/updateable_sequenced_task_runner.h
     template_util.h
     test/malloc_wrapper.h
@@ -720,6 +836,7 @@ set(BASE_SOURCE
     threading/scoped_thread_priority.cc
     threading/scoped_thread_priority.h
     threading/sequence_bound.h
+    threading/sequence_bound_internal.h
     threading/sequence_local_storage_map.cc
     threading/sequence_local_storage_map.h
     threading/sequence_local_storage_slot.cc
@@ -789,9 +906,13 @@ set(BASE_SOURCE
     trace_event/trace_id_helper.h
     traits_bag.h
     tuple.h
+    types/always_false.h
+    types/cxx23_to_underlying.h
     types/expected.h
     types/expected_internal.h
     types/id_type.h
+    types/optional_ref.h
+    types/optional_util.h
     types/pass_key.h
     types/strong_alias.h
     types/token_type.h
@@ -807,9 +928,10 @@ set(BASE_SOURCE
     vlog.h
 )
 
-IF(CMAKE_SYSTEM_NAME MATCHES "Linux")
-ELSEIF(CMAKE_SYSTEM_NAME MATCHES "Windows")
-    set(BASE_PLATFORM_SOURCE
+if(is_win)
+    list(APPEND sources
+        base_paths_win.cc
+        base_paths_win.h
         debug/debugger_win.cc
         debug/gdi_debug_util_win.cc
         debug/gdi_debug_util_win.h
@@ -833,6 +955,10 @@ ELSEIF(CMAKE_SYSTEM_NAME MATCHES "Windows")
         message_loop/message_pump_win.cc
         message_loop/message_pump_win.h
         native_library_win.cc
+        power_monitor/battery_level_provider_win.cc
+        power_monitor/power_monitor_device_source_win.cc
+        power_monitor/speed_limit_observer_win.cc
+        power_monitor/speed_limit_observer_win.h
         process/kill_win.cc
         process/launch_win.cc
         process/memory_win.cc
@@ -862,12 +988,12 @@ ELSEIF(CMAKE_SYSTEM_NAME MATCHES "Windows")
         synchronization/lock_impl_win.cc
         synchronization/waitable_event_watcher_win.cc
         synchronization/waitable_event_win.cc
-        task/thread_pool/thread_group_native_win.cc
-        task/thread_pool/thread_group_native_win.h
         threading/platform_thread_win.cc
         threading/platform_thread_win.h
         threading/thread_local_storage_win.cc
         timer/hi_res_timer_manager_win.cc
+        win/access_control_list.cc
+        win/access_control_list.h
         win/access_token.cc
         win/access_token.h
         win/async_operation.h
@@ -883,6 +1009,8 @@ ELSEIF(CMAKE_SYSTEM_NAME MATCHES "Windows")
         win/core_winrt_util.cc
         win/core_winrt_util.h
         win/current_module.h
+        win/dark_mode_support.cc
+        win/dark_mode_support.h
         win/default_apps_util.cc
         win/default_apps_util.h
         win/embedded_i18n/language_selector.cc
@@ -947,6 +1075,8 @@ ELSEIF(CMAKE_SYSTEM_NAME MATCHES "Windows")
         win/scoped_windows_thread_environment.h
         win/scoped_winrt_initializer.cc
         win/scoped_winrt_initializer.h
+        win/security_descriptor.cc
+        win/security_descriptor.h
         win/security_util.cc
         win/security_util.h
         win/shlwapi.h
@@ -962,6 +1092,7 @@ ELSEIF(CMAKE_SYSTEM_NAME MATCHES "Windows")
         win/variant_vector.h
         win/vector.cc
         win/vector.h
+        win/win_handle_types.h
         win/win_handle_types_list.inc
         win/win_util.cc
         win/win_util.h
@@ -980,29 +1111,354 @@ ELSEIF(CMAKE_SYSTEM_NAME MATCHES "Windows")
         win/wmi.h
         win/wrapped_window_proc.cc
         win/wrapped_window_proc.h
-        base_paths_win.cc
-        base_paths_win.h
-        files/file_enumerator_win.cc
-        memory/platform_shared_memory_mapper_win.cc
-        memory/platform_shared_memory_region_win.cc
-        power_monitor/power_monitor_device_source_win.cc
-        power_monitor/speed_limit_observer_win.cc
-        power_monitor/speed_limit_observer_win.h
-        profiler/win32_stack_frame_unwinder.cc
-        profiler/win32_stack_frame_unwinder.h
-        rand_util_win.cc
-        system/sys_info_win.cc
-        time/time_win.cc
-        # trace_event/trace_event_etw_export_win.cc
-        # trace_event/trace_event_etw_export_win.h
-        # trace_event/trace_logging_minimal_win.cc
-        # trace_event/trace_logging_minimal_win.h
+    )
+endif()
+
+if(use_allocator_shim)
+    list(APPEND sources
+        allocator/partition_allocator/shim/allocator_shim.cc
+        allocator/partition_allocator/shim/allocator_shim.h
+        allocator/partition_allocator/shim/allocator_shim_internals.h
+    )
+
+    if(use_partition_alloc)
+        list(APPEND sources
+            allocator/partition_allocator/shim/allocator_shim_default_dispatch_to_partition_alloc.cc
+            allocator/partition_allocator/shim/allocator_shim_default_dispatch_to_partition_alloc.h
+        )
+    endif()
+
+    if(is_win)
+        list(APPEND sources
+            allocator/partition_allocator/shim/allocator_shim_override_ucrt_symbols_win.h
+            allocator/partition_allocator/shim/winheap_stubs_win.cc
+            allocator/partition_allocator/shim/winheap_stubs_win.h
+        )
+    endif()
+
+    if(!use_partition_alloc_as_malloc)
+        if(is_win)
+            list(APPEND sources
+                allocator/partition_allocator/shim/allocator_shim_default_dispatch_to_winheap.cc
+            )
+        endif()
+    endif()
+endif()
+
+if(use_clang_profiling)
+    # Call-sites use this conditional on the CLANG_PROFILING macro, for clarity.
+    list(APPEND sources
+        test/clang_profiling.cc
+        test/clang_profiling.h
+    )
+endif()
+
+list(APPEND sources
+    hash/md5.h
+    hash/md5_constexpr.h
+    hash/md5_constexpr_internal.h
+    hash/sha1.h
+)
+
+if(is_nacl)
+    list(APPEND sources
+        hash/md5_nacl.cc
+        hash/md5_nacl.h
+        hash/sha1_nacl.cc
+        hash/sha1_nacl.h
+    )
+else()
+    list(APPEND sources
+        hash/md5_boringssl.cc
+        hash/md5_boringssl.h
+        hash/sha1_boringssl.cc
+        hash/sha1_boringssl.h
+    )
+
+    # public_deps += [ "//third_party/boringssl" ]
+endif()
+
+if(is_nacl)
+    # Explicitly include the linux file.
+    list(APPEND sources
+        debug/stack_trace_nacl.cc
+        files/file_path_watcher_stub.cc
+        memory/page_size_nacl.cc
+        process/process_stubs.cc
+        profiler/stack_sampler_posix.cc
+        sync_socket_nacl.cc
+        system/sys_info_nacl.cc
+        threading/platform_thread_linux.cc
+    )
+
+    list(REMOVE_ITEM sources
+        cpu.cc
+        debug/crash_logging.cc
+        debug/crash_logging.h
+        debug/stack_trace.cc
+        debug/stack_trace_posix.cc
+        files/file_descriptor_watcher_posix.cc
+        files/file_descriptor_watcher_posix.h
+        files/file_enumerator.cc
+        files/file_enumerator_posix.cc
+        files/file_proxy.cc
+        files/file_util.cc
+        files/file_util.h
+        files/file_util_posix.cc
+        files/important_file_writer.cc
+        files/important_file_writer.h
+        files/important_file_writer_cleaner.cc
+        files/important_file_writer_cleaner.h
+        files/scoped_temp_dir.cc
+        json/json_file_value_serializer.cc
+        json/json_file_value_serializer.h
+        memory/discardable_memory.cc
+        memory/discardable_memory.h
+        memory/discardable_memory_allocator.cc
+        memory/discardable_memory_allocator.h
+        memory/discardable_shared_memory.cc
+        memory/discardable_shared_memory.h
+        memory/madv_free_discardable_memory_allocator_posix.cc
+        memory/madv_free_discardable_memory_allocator_posix.h
+        memory/madv_free_discardable_memory_posix.cc
+        memory/madv_free_discardable_memory_posix.h
+        memory/page_size_posix.cc
+        native_library.cc
+        native_library_posix.cc
+        path_service.cc
+        posix/unix_domain_socket.cc
+        process/kill.cc
+        process/kill.h
+        process/kill_posix.cc
+        process/launch.cc
+        process/launch.h
+        process/launch_posix.cc
+        process/memory.cc
+        process/memory.h
+        process/process_iterator.cc
+        process/process_iterator.h
+        process/process_metrics.cc
+        process/process_metrics_posix.cc
+        process/process_posix.cc
+        profiler/module_cache_posix.cc
+        rand_util_posix.cc
+        scoped_native_library.cc
+        sync_socket_posix.cc
+        system/sys_info.cc
+        system/sys_info_posix.cc
+        task/thread_pool/initialization_util.cc
+        task/thread_pool/initialization_util.h
+    )
+else()
+    # Remove NaCl stuff.
+    list(REMOVE_ITEM sources
+        os_compat_nacl.cc
+        os_compat_nacl.h
+        rand_util_nacl.cc
+    )
+
+    if(use_partition_alloc)
+        # Add stuff that doesn't work in NaCl.
+        list(APPEND sources
+
+            # PartitionAlloc uses SpinLock, which doesn't work in NaCl (see below).
+            allocator/partition_alloc_features.cc
+            allocator/partition_alloc_features.h
+            allocator/partition_alloc_support.cc
+            allocator/partition_alloc_support.h
+        )
+    endif()
+
+    # Need this to pass gn check, because gn check doesn't see
+    # BUILDFLAG(USE_PARTITION_ALLOC). A linker will remove all
+    # partition_alloc code if use_partition_alloc = false because no code uses
+    # partition_alloc.
+    # public_deps += [ "allocator/partition_allocator:partition_alloc" ]
+endif()
+
+# Windows.
+if(is_win)
+    list(APPEND sources
+        "files/file_enumerator_win.cc" ,
+        "memory/platform_shared_memory_mapper_win.cc" ,
+        "memory/platform_shared_memory_region_win.cc" ,
+        "profiler/win32_stack_frame_unwinder.cc" ,
+        "profiler/win32_stack_frame_unwinder.h" ,
+        "rand_util_win.cc" ,
+        "system/sys_info_win.cc" ,
+        "time/time_win.cc" ,
+    )
+
+    list(REMOVE_ITEM sources
+        "file_descriptor_store.cc" ,
+        "file_descriptor_store.h" ,
+    )
+
+    # deps += [ "//base/win:base_win_buildflags" ]
+
+    # data_deps += [ "//build/win:runtime_libs" ]
+
+    # if (com_init_check_hook_disabled) {
+    # defines += [ "COM_INIT_CHECK_HOOK_DISABLED" ]
+    # }
+
+    # libs += [
+    # "cfgmgr32.lib",
+    # "powrprof.lib",
+    # "propsys.lib",
+    # "setupapi.lib",
+    # "userenv.lib",
+    # "wbemuuid.lib",
+    # "winmm.lib",
+    # ]
+    # all_dependent_configs += [
+    # ":base_win_linker_flags",
+    # "//tools/win/DebugVisualizers:chrome",
+    # ]
+    # inputs = [
+    # # chrome.natvis listed as an input here instead of in
+    # # //tools/win/DebugVisualizers:chrome to prevent unnecessary size increase
+    # # in generated build files.
+    # "//tools/win/DebugVisualizers/chrome.natvis",
+    # ]
+endif()
+
+if(NOT is_android)
+    list(REMOVE_ITEM sources
+        linux_util.cc
+        linux_util.h
+    )
+endif()
+
+if(NOT use_glib)
+    list(REMOVE_ITEM sources
+        message_loop/message_pump_glib.cc
+        message_loop/message_pump_glib.h
+    )
+endif()
+
+if(enable_base_tracing)
+    list(APPEND sources
+        trace_event/auto_open_close_event.h
+        trace_event/builtin_categories.cc
+        trace_event/builtin_categories.h
+        trace_event/category_registry.cc
+        trace_event/category_registry.h
+        trace_event/heap_profiler.h
+        trace_event/interned_args_helper.cc
+        trace_event/interned_args_helper.h
+        trace_event/log_message.cc
+        trace_event/log_message.h
+        trace_event/malloc_dump_provider.cc
+        trace_event/malloc_dump_provider.h
+        trace_event/memory_allocator_dump.cc
+        trace_event/memory_allocator_dump.h
+        trace_event/memory_dump_manager.cc
+        trace_event/memory_dump_manager.h
+        trace_event/memory_dump_manager_test_utils.h
+        trace_event/memory_dump_provider.h
+        trace_event/memory_dump_provider_info.cc
+        trace_event/memory_dump_provider_info.h
+        trace_event/memory_dump_request_args.cc
+        trace_event/memory_dump_request_args.h
+        trace_event/memory_dump_scheduler.cc
+        trace_event/memory_dump_scheduler.h
+        trace_event/memory_infra_background_allowlist.cc
+        trace_event/memory_infra_background_allowlist.h
+        trace_event/memory_pressure_level_proto.cc
+        trace_event/memory_pressure_level_proto.h
+        trace_event/memory_usage_estimator.cc
+        trace_event/memory_usage_estimator.h
+        trace_event/optional_trace_event.h
+        trace_event/process_memory_dump.cc
+        trace_event/process_memory_dump.h
+        trace_event/task_execution_macros.h
+        trace_event/trace_arguments.cc
+        trace_event/trace_arguments.h
+        trace_event/trace_buffer.cc
+        trace_event/trace_buffer.h
+        trace_event/trace_category.h
+        trace_event/trace_config.cc
+        trace_event/trace_config.h
+        trace_event/trace_config_category_filter.cc
+        trace_event/trace_config_category_filter.h
+        trace_event/trace_conversion_helper.h
+        trace_event/trace_event.h
+        trace_event/trace_event_impl.cc
+        trace_event/trace_event_impl.h
+        trace_event/trace_event_memory_overhead.cc
+        trace_event/trace_event_memory_overhead.h
+        trace_event/trace_log.cc
+        trace_event/trace_log.h
+        trace_event/trace_log_constants.cc
+        trace_event/traced_value.cc
+        trace_event/traced_value.h
+        trace_event/traced_value_support.h
+        trace_event/tracing_agent.cc
+        trace_event/tracing_agent.h
+        trace_event/typed_macros.h
+        trace_event/typed_macros_embedder_support.h
+        trace_event/typed_macros_internal.cc
+        trace_event/typed_macros_internal.h
+        tracing/perfetto_platform.cc
+        tracing/perfetto_platform.h
+        tracing/perfetto_task_runner.cc
+        tracing/perfetto_task_runner.h
+        tracing/trace_time.cc
+        tracing/trace_time.h
+        tracing/tracing_tls.cc
+        tracing/tracing_tls.h
+    )
+
+    # public_deps += [
+    # "//base/tracing/protos:chrome_track_event_zero",
+    # "//third_party/perfetto:libperfetto",
+    # ]
+
+    # deps += [
+    # "//base/tracing/protos:chrome_track_event",
+    # "//third_party/perfetto/include/perfetto/protozero",
+    # ]
+
+    # all_dependent_configs += [
+    # ":perfetto_config",
+    # "//third_party/perfetto/gn:public_config",
+    # ]
+    if(is_win)
+        list(APPEND sources
+            trace_event/trace_event_etw_export_win.cc
+            trace_event/trace_event_etw_export_win.h
+            trace_event/trace_logging_minimal_win.cc
+            trace_event/trace_logging_minimal_win.h
+        )
+    endif()
+
+    if(use_partition_alloc_as_malloc)
+        list(APPEND sources
+            trace_event/address_space_dump_provider.cc
+            trace_event/address_space_dump_provider.h
+        )
+    endif()
+else()
+    list(APPEND sources
+        trace_event/trace_event_stub.cc
+        trace_event/trace_event_stub.h
+    )
+endif()
+
+list(APPEND sources
+    base_export.h
+    base_switches.cc
+    base_switches.h
+    immediate_crash.h
+)
+
+if(is_win)
+    list(APPEND sources
         win/static_constants.cc
         win/static_constants.h
     )
-ELSEIF(CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
-ELSE()
-ENDIF(CMAKE_SYSTEM_NAME MATCHES "Linux")
+endif()
 
 set(BASE_LINK_LIBRARIES
 )
@@ -1020,9 +1476,10 @@ link_directories(
     ${BASE_LINK_DIRECTORIES}
 )
 
-add_library(${BASE_TARGET_NAME} ${BASE_BUILD_CONFIGURATION_TYPE}
-    ${BASE_SOURCE}
-    ${BASE_PLATFORM_SOURCE}
+add_library(
+    ${BASE_TARGET_NAME}
+    ${BASE_BUILD_CONFIGURATION_TYPE}
+    ${sources}
 )
 
 target_link_libraries(${BASE_TARGET_NAME}

@@ -1,4 +1,4 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -48,6 +48,10 @@ class BASE_EXPORT VlogInfo {
   // __FILE__).
   int GetVlogLevel(base::StringPiece file) const;
 
+  // Returns a new VlogInfo based on |this| but with extra modules/levels added
+  // according to |vmodule_switch|.
+  VlogInfo* WithSwitches(const std::string& vmodule_switch) const;
+
  private:
   void SetMaxVlogLevel(int level);
   int GetMaxVlogLevel() const;
@@ -65,6 +69,8 @@ class BASE_EXPORT VlogInfo {
     int vlog_level;
     MatchTarget match_target;
   };
+
+  VlogInfo(std::vector<VmodulePattern> vmodule_levels, int* min_log_level);
 
   // Parses `VmodulePatterns` from a string, typically provided on the
   // commandline.

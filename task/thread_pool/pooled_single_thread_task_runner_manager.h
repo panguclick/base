@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -120,7 +120,7 @@ class BASE_EXPORT PooledSingleThreadTaskRunnerManager final {
   WorkerThread* CreateAndRegisterWorkerThread(
       const std::string& name,
       SingleThreadTaskRunnerThreadMode thread_mode,
-      ThreadPriority priority_hint) EXCLUSIVE_LOCKS_REQUIRED(lock_);
+      ThreadType thread_type_hint) EXCLUSIVE_LOCKS_REQUIRED(lock_);
 
   template <typename DelegateType>
   WorkerThread*& GetSharedWorkerThreadForTraits(const TaskTraits& traits);

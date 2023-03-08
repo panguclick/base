@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -58,10 +58,9 @@ class BASE_EXPORT NativeLibraryPrefetcher {
   // Returns the percentage of [start, end] currently resident in
   // memory, or -1 in case of error.
   static int PercentageOfResidentCode(size_t start, size_t end);
-//delete by kingkong
-  // FRIEND_TEST_ALL_PREFIXES(NativeLibraryPrefetcherTest,
-  //                          TestPercentageOfResidentCode);
-  //end
+
+  FRIEND_TEST_ALL_PREFIXES(NativeLibraryPrefetcherTest,
+                           TestPercentageOfResidentCode);
 };
 
 }  // namespace android

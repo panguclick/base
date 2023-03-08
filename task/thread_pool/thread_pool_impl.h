@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -64,7 +64,9 @@ class BASE_EXPORT ThreadPoolImpl : public ThreadPoolInstance,
   // ThreadPoolInstance:
   void Start(const ThreadPoolInstance::InitParams& init_params,
              WorkerThreadObserver* worker_thread_observer) override;
-  int GetMaxConcurrentNonBlockedTasksWithTraitsDeprecated(
+  bool WasStarted() const final;
+  bool WasStartedUnsafe() const final;
+  size_t GetMaxConcurrentNonBlockedTasksWithTraitsDeprecated(
       const TaskTraits& traits) const override;
   void Shutdown() override;
   void FlushForTesting() override;
@@ -139,21 +141,15 @@ class BASE_EXPORT ThreadPoolImpl : public ThreadPoolInstance,
                             scoped_refptr<Sequence> sequence) override;
   bool ShouldYield(const TaskSource* task_source) override;
 
+  const std::string histogram_label_;
   const std::unique_ptr<TaskTrackerImpl> task_tracker_;
   ServiceThread service_thread_;
   DelayedTaskManager delayed_task_manager_;
   PooledSingleThreadTaskRunnerManager single_thread_task_runner_manager_;
 
   std::unique_ptr<ThreadGroup> foreground_thread_group_;
+  std::unique_ptr<ThreadGroup> utility_thread_group_;
   std::unique_ptr<ThreadGroup> background_thread_group_;
-
-  bool disable_job_yield_ = false;
-  bool disable_fair_scheduling_ = false;
-  std::atomic<bool> disable_job_update_priority_{false};
-  // Leeway value applied to delayed tasks. An atomic is used here because the
-  // value is queried from multiple threads when tasks are posted cross-thread,
-  // which can race with its initialization.
-  std::atomic<TimeDelta> task_leeway_{PendingTask::kDefaultLeeway};
 
   // Whether this TaskScheduler was started.
   bool started_ GUARDED_BY_CONTEXT(sequence_checker_) = false;

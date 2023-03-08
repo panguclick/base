@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 #include <iterator>
 
 #include "base/check_op.h"
+#include "base/ranges/algorithm.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -149,8 +150,7 @@ TEST(CheckedContiguousIterator, OptimizedCopy) {
   Iter out_end = std::copy(in_begin, in_end, out_begin);
   EXPECT_EQ(out_end, out_begin + (in_end - in_begin));
 
-  EXPECT_TRUE(std::equal(std::begin(arr_in), std::end(arr_in),
-                         std::begin(arr_out), std::end(arr_out)));
+  EXPECT_TRUE(ranges::equal(arr_in, arr_out));
 }
 
 }  // namespace base

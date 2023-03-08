@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,6 @@
 #include <sstream>
 
 #include "build/build_config.h"
-#include "build/buildflag.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 // This macro helps avoid wrapped lines in the test structs.

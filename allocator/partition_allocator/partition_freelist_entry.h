@@ -1,4 +1,4 @@
-// Copyright (c) 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,17 +8,22 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "base/allocator/buildflags.h"
+#include "base/allocator/partition_allocator/freeslot_bitmap.h"
 #include "base/allocator/partition_allocator/partition_alloc-inl.h"
 #include "base/allocator/partition_allocator/partition_alloc_base/bits.h"
 #include "base/allocator/partition_allocator/partition_alloc_base/compiler_specific.h"
+#include "base/allocator/partition_allocator/partition_alloc_base/debug/debugging_buildflags.h"
 #include "base/allocator/partition_allocator/partition_alloc_base/immediate_crash.h"
-#include "base/allocator/partition_allocator/partition_alloc_base/sys_byteorder.h"
+#include "base/allocator/partition_allocator/partition_alloc_buildflags.h"
 #include "base/allocator/partition_allocator/partition_alloc_check.h"
 #include "base/allocator/partition_allocator/partition_alloc_config.h"
 #include "base/allocator/partition_allocator/partition_alloc_constants.h"
 #include "base/allocator/partition_allocator/partition_ref_count.h"
 #include "build/build_config.h"
+
+#if !defined(ARCH_CPU_BIG_ENDIAN)
+#include "base/allocator/partition_allocator/reverse_bytes.h"
+#endif  // !defined(ARCH_CPU_BIG_ENDIAN)
 
 namespace partition_alloc::internal {
 
@@ -40,6 +45,7 @@ class EncodedPartitionFreelistEntryPtr {
       std::nullptr_t)
       : encoded_(Transform(0)) {}
   explicit PA_ALWAYS_INLINE EncodedPartitionFreelistEntryPtr(void* ptr)
+      // The encoded pointer stays MTE-tagged.
       : encoded_(Transform(reinterpret_cast<uintptr_t>(ptr))) {}
 
   PA_ALWAYS_INLINE PartitionFreelistEntry* Decode() const {
@@ -69,7 +75,7 @@ class EncodedPartitionFreelistEntryPtr {
 #if defined(ARCH_CPU_BIG_ENDIAN)
     uintptr_t transformed = ~address;
 #else
-    uintptr_t transformed = base::ByteSwapUintPtrT(address);
+    uintptr_t transformed = ReverseBytes(address);
 #endif
     return transformed;
   }
@@ -116,10 +122,14 @@ class PartitionFreelistEntry {
   // Emplaces the freelist entry at the beginning of the given slot span, and
   // initializes it as null-terminated.
   static PA_ALWAYS_INLINE PartitionFreelistEntry* EmplaceAndInitNull(
-      uintptr_t slot_start) {
-    auto* entry = new (reinterpret_cast<void*>(slot_start))
-        PartitionFreelistEntry(nullptr);
+      void* slot_start_tagged) {
+    // |slot_start_tagged| is MTE-tagged.
+    auto* entry = new (slot_start_tagged) PartitionFreelistEntry(nullptr);
     return entry;
+  }
+  static PA_ALWAYS_INLINE PartitionFreelistEntry* EmplaceAndInitNull(
+      uintptr_t slot_start) {
+    return EmplaceAndInitNull(SlotStartAddr2Ptr(slot_start));
   }
 
   // Emplaces the freelist entry at the beginning of the given slot span, and
@@ -132,7 +142,7 @@ class PartitionFreelistEntry {
       uintptr_t slot_start,
       PartitionFreelistEntry* next) {
     auto* entry =
-        new (reinterpret_cast<void*>(slot_start)) PartitionFreelistEntry(next);
+        new (SlotStartAddr2Ptr(slot_start)) PartitionFreelistEntry(next);
     return entry;
   }
 
@@ -144,7 +154,7 @@ class PartitionFreelistEntry {
   static PA_ALWAYS_INLINE void EmplaceAndInitForTest(uintptr_t slot_start,
                                                      void* next,
                                                      bool make_shadow_match) {
-    new (reinterpret_cast<void*>(slot_start))
+    new (SlotStartAddr2Ptr(slot_start))
         PartitionFreelistEntry(next, make_shadow_match);
   }
 
@@ -173,7 +183,7 @@ class PartitionFreelistEntry {
     }
   }
 
-  PA_ALWAYS_INLINE void SetNext(PartitionFreelistEntry* ptr) {
+  PA_ALWAYS_INLINE void SetNext(PartitionFreelistEntry* entry) {
     // SetNext() is either called on the freelist head, when provisioning new
     // slots, or when GetNext() has been called before, no need to pass the
     // size.
@@ -181,15 +191,14 @@ class PartitionFreelistEntry {
     // Regular freelists always point to an entry within the same super page.
     //
     // This is most likely a PartitionAlloc bug if this triggers.
-    if (PA_UNLIKELY(
-            ptr &&
-            (reinterpret_cast<uintptr_t>(this) & kSuperPageBaseMask) !=
-                (reinterpret_cast<uintptr_t>(ptr) & kSuperPageBaseMask))) {
+    if (PA_UNLIKELY(entry &&
+                    (SlotStartPtr2Addr(this) & kSuperPageBaseMask) !=
+                        (SlotStartPtr2Addr(entry) & kSuperPageBaseMask))) {
       FreelistCorruptionDetected(0);
     }
 #endif  // BUILDFLAG(PA_DCHECK_IS_ON)
 
-    encoded_next_ = EncodedPartitionFreelistEntryPtr(ptr);
+    encoded_next_ = EncodedPartitionFreelistEntryPtr(entry);
 #if defined(PA_HAS_FREELIST_SHADOW_ENTRY)
     shadow_ = encoded_next_.Inverted();
 #endif
@@ -203,8 +212,7 @@ class PartitionFreelistEntry {
 #if defined(PA_HAS_FREELIST_SHADOW_ENTRY)
     shadow_ = 0;
 #endif
-    uintptr_t slot_start = reinterpret_cast<uintptr_t>(this);
-    return slot_start;
+    return SlotStartPtr2Addr(this);
   }
 
   PA_ALWAYS_INLINE constexpr bool IsEncodedNextPtrZero() const {
@@ -228,8 +236,8 @@ class PartitionFreelistEntry {
     //
     // Also, the lightweight UaF detection (pointer shadow) is checked.
 
-    uintptr_t here_address = reinterpret_cast<uintptr_t>(here);
-    uintptr_t next_address = reinterpret_cast<uintptr_t>(next);
+    uintptr_t here_address = SlotStartPtr2Addr(here);
+    uintptr_t next_address = SlotStartPtr2Addr(next);
 
 #if defined(PA_HAS_FREELIST_SHADOW_ENTRY)
     bool shadow_ptr_ok = here->encoded_next_.Inverted() == here->shadow_;
@@ -239,6 +247,15 @@ class PartitionFreelistEntry {
 
     bool same_superpage = (here_address & kSuperPageBaseMask) ==
                           (next_address & kSuperPageBaseMask);
+#if BUILDFLAG(USE_FREESLOT_BITMAP)
+    bool marked_as_free_in_bitmap =
+        for_thread_cache
+            ? true
+            : !FreeSlotBitmapSlotIsUsed(reinterpret_cast<uintptr_t>(next));
+#else
+    bool marked_as_free_in_bitmap = true;
+#endif
+
     // This is necessary but not sufficient when quarantine is enabled, see
     // SuperPagePayloadBegin() in partition_page.h. However we don't want to
     // fetch anything from the root in this function.
@@ -248,7 +265,8 @@ class PartitionFreelistEntry {
     if (for_thread_cache)
       return shadow_ptr_ok & not_in_metadata;
     else
-      return shadow_ptr_ok & same_superpage & not_in_metadata;
+      return shadow_ptr_ok & same_superpage & marked_as_free_in_bitmap &
+             not_in_metadata;
   }
 
   EncodedPartitionFreelistEntryPtr encoded_next_;
@@ -325,13 +343,5 @@ PA_ALWAYS_INLINE PartitionFreelistEntry* PartitionFreelistEntry::GetNext(
 }
 
 }  // namespace partition_alloc::internal
-
-namespace base::internal {
-
-// TODO(https://crbug.com/1288247): Remove these 'using' declarations once
-// the migration to the new namespaces gets done.
-using ::partition_alloc::internal::PartitionFreelistEntry;
-
-}  // namespace base::internal
 
 #endif  // BASE_ALLOCATOR_PARTITION_ALLOCATOR_PARTITION_FREELIST_ENTRY_H_

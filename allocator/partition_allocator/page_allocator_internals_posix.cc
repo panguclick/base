@@ -1,4 +1,4 @@
-// Copyright (c) 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,7 +16,7 @@
 namespace partition_alloc::internal {
 
 int GetAccessFlags(PageAccessibilityConfiguration accessibility) {
-  switch (accessibility) {
+  switch (accessibility.permissions) {
     case PageAccessibilityConfiguration::kRead:
       return PROT_READ;
     case PageAccessibilityConfiguration::kReadWriteTagged:
@@ -35,9 +35,6 @@ int GetAccessFlags(PageAccessibilityConfiguration accessibility) {
       return PROT_READ | PROT_EXEC;
     case PageAccessibilityConfiguration::kReadWriteExecute:
       return PROT_READ | PROT_WRITE | PROT_EXEC;
-    default:
-      PA_NOTREACHED();
-      [[fallthrough]];
     case PageAccessibilityConfiguration::kInaccessible:
       return PROT_NONE;
   }

@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -199,7 +199,8 @@ public class BaseJUnit4ClassRunner extends AndroidJUnit4ClassRunner {
      */
     @CallSuper
     protected List<TestHook> getPreTestHooks() {
-        return Arrays.asList(CommandLineFlags.getPreTestHook(), new UnitTestNoBrowserProcessHook());
+        return Arrays.asList(CommandLineFlags.getPreTestHook(), new UnitTestNoBrowserProcessHook(),
+                new ResetCachedFlagValuesTestHook());
     }
 
     /**

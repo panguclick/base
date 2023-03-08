@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -118,36 +118,10 @@ SymbolMap::SymbolMap() {
 void SymbolMap::Populate() {
   zx_handle_t process = zx_process_self();
 
-  // Try to fetch the name of the process' main executable, which was set as the
-  // name of the |process| kernel object.
-  // TODO(crbug.com/1131250): Object names can only have up to ZX_MAX_NAME_LEN
-  // characters, so if we keep hitting problems with truncation, find a way to
-  // plumb argv[0] through to here instead, e.g. using
-  // CommandLine::GetProgramName().
-  char app_name[std::extent<decltype(SymbolMap::Module::name)>()];
-  zx_status_t status =
-      zx_object_get_property(process, ZX_PROP_NAME, app_name, sizeof(app_name));
-  if (status == ZX_OK) {
-    // The process name may have a process type suffix at the end (e.g.
-    // "context", "renderer", gpu"), which doesn't belong in the module list.
-    // Trim the suffix from the name.
-    for (size_t i = 0; i < std::size(app_name) && app_name[i] != '\0'; ++i) {
-      if (app_name[i] == ':') {
-        app_name[i] = 0;
-        break;
-      }
-    }
-  } else {
-    DPLOG(WARNING)
-        << "Couldn't get name, falling back to 'app' for program name: "
-        << status;
-    strlcat(app_name, "app", sizeof(app_name));
-  }
-
   // Retrieve the debug info struct.
   uintptr_t debug_addr;
-  status = zx_object_get_property(process, ZX_PROP_PROCESS_DEBUG_ADDR,
-                                  &debug_addr, sizeof(debug_addr));
+  zx_status_t status = zx_object_get_property(
+      process, ZX_PROP_PROCESS_DEBUG_ADDR, &debug_addr, sizeof(debug_addr));
   if (status != ZX_OK) {
     DPLOG(ERROR) << "Couldn't get symbol map for process: " << status;
     return;
@@ -188,7 +162,7 @@ void SymbolMap::Populate() {
           reinterpret_cast<const char*>(next_entry.addr) + phdr.p_vaddr;
       segment.relative_addr = phdr.p_vaddr;
       segment.size = phdr.p_memsz;
-      segment.permission_flags = phdr.p_flags;
+      segment.permission_flags = static_cast<int>(phdr.p_flags);
 
       next_entry.segments[next_entry.segment_count] = std::move(segment);
       ++next_entry.segment_count;
@@ -202,7 +176,8 @@ void SymbolMap::Populate() {
       strlcpy(next_entry.name, elf_library_name->data(),
               elf_library_name->size() + 1);
     } else {
-      StringPiece link_map_name(lmap->l_name[0] ? lmap->l_name : app_name);
+      StringPiece link_map_name(lmap->l_name[0] ? lmap->l_name
+                                                : "<executable>");
 
       // The "module" stack trace annotation doesn't allow for strings which
       // resemble paths, so extract the filename portion from |link_map_name|.
@@ -224,6 +199,22 @@ void SymbolMap::Populate() {
   }
 
   valid_ = true;
+}
+
+// Returns true if |address| is contained by any of the memory regions
+// mapped for |module_entry|.
+bool ModuleContainsFrameAddress(void* address,
+                                const SymbolMap::Module& module_entry) {
+  for (size_t i = 0; i < module_entry.segment_count; ++i) {
+    const SymbolMap::Segment& segment = module_entry.segments[i];
+    const void* segment_end = reinterpret_cast<const void*>(
+        reinterpret_cast<const char*>(segment.addr) + segment.size - 1);
+
+    if (address >= segment.addr && address <= segment_end) {
+      return true;
+    }
+  }
+  return false;
 }
 
 }  // namespace
@@ -256,12 +247,22 @@ void StackTrace::OutputToStreamWithPrefix(std::ostream* os,
   SymbolMap map;
 
   int module_id = 0;
-  for (const SymbolMap::Module& entry : map.GetModules()) {
-    *os << "{{{module:" << module_id << ":" << entry.name
-        << ":elf:" << entry.build_id << "}}}\n";
+  for (const SymbolMap::Module& module_entry : map.GetModules()) {
+    // Don't emit information on modules that aren't useful for the actual
+    // stack trace, so as to reduce the load on the symbolizer and syslog.
+    bool should_emit_module = false;
+    for (size_t i = 0; i < count_ && !should_emit_module; ++i) {
+      should_emit_module = ModuleContainsFrameAddress(trace_[i], module_entry);
+    }
+    if (!should_emit_module) {
+      continue;
+    }
 
-    for (size_t i = 0; i < entry.segment_count; ++i) {
-      const SymbolMap::Segment& segment = entry.segments[i];
+    *os << "{{{module:" << module_id << ":" << module_entry.name
+        << ":elf:" << module_entry.build_id << "}}}\n";
+
+    for (size_t i = 0; i < module_entry.segment_count; ++i) {
+      const SymbolMap::Segment& segment = module_entry.segments[i];
 
       char permission_string[4] = {};
       *os << "{{{mmap:" << segment.addr << ":0x" << std::hex << segment.size

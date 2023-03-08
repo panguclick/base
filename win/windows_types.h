@@ -1,4 +1,4 @@
-// Copyright (c) 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,6 +12,8 @@
 #include <concurrencysal.h>
 #include <sal.h>
 #include <specstrings.h>
+
+#include "base/win/win_handle_types.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -77,14 +79,6 @@ typedef LONG NTSTATUS;
 #define REFGUID const GUID&
 #endif
 
-// Forward declare Windows compatible handles.
-
-#define CHROME_WINDOWS_HANDLE_TYPE(name) \
-  struct name##__;                       \
-  typedef struct name##__* name;
-#include "base/win/win_handle_types_list.inc"
-#undef CHROME_WINDOWS_HANDLE_TYPE
-
 typedef LPVOID HINTERNET;
 typedef HICON HCURSOR;
 typedef HINSTANCE HMODULE;
@@ -117,6 +111,8 @@ typedef struct tagNMHDR NMHDR;
 typedef struct _SP_DEVINFO_DATA SP_DEVINFO_DATA;
 
 typedef PVOID PSID;
+typedef PVOID PSECURITY_DESCRIPTOR;
+typedef DWORD SECURITY_INFORMATION;
 
 typedef HANDLE HLOCAL;
 
@@ -135,6 +131,8 @@ typedef UINT_PTR SOCKET;
 typedef struct _PROCESS_INFORMATION PROCESS_INFORMATION;
 typedef struct _SECURITY_CAPABILITIES SECURITY_CAPABILITIES;
 typedef struct _ACL ACL;
+typedef struct _SECURITY_DESCRIPTOR SECURITY_DESCRIPTOR;
+typedef struct _GENERIC_MAPPING GENERIC_MAPPING;
 
 // Declare Chrome versions of some Windows structures. These are needed for
 // when we need a concrete type but don't want to pull in Windows.h. We can't
@@ -154,6 +152,12 @@ struct CHROME_CONDITION_VARIABLE {
 struct CHROME_LUID {
   DWORD LowPart;
   LONG HighPart;
+
+  bool operator==(CHROME_LUID const& that) const {
+    return this->LowPart == that.LowPart && this->HighPart == that.HighPart;
+  }
+
+  bool operator!=(CHROME_LUID const& that) const { return !(*this == that); }
 };
 
 // _WIN32_FIND_DATAW is 592 bytes and the largest built-in type in it is a

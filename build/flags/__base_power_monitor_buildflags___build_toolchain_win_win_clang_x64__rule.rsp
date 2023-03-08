@@ -1,0 +1,1 @@
+--flags HAS_BATTERY_LEVEL_PROVIDER_IMPL=true

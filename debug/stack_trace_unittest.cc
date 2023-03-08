@@ -1,4 +1,4 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -399,6 +399,22 @@ TEST(CheckExitCodeAfterSignalHandlerDeathTest, CheckSIGSEGV) {
 
   EXPECT_EXIT(*p_int = 1234, ::testing::KilledBySignal(SIGSEGV), "");
 }
+
+#if defined(ARCH_CPU_X86_64)
+TEST(CheckExitCodeAfterSignalHandlerDeathTest,
+     CheckSIGSEGVNonCanonicalAddress) {
+  // Pointee and pointer are volatile to prevent reordering of instructions,
+  // i.e. for optimization. Reordering may lead to tests erroneously failing due
+  // to SIGSEGV being raised outside of EXPECT_EXIT.
+  //
+  // On Linux, the upper half of the address space is reserved by the kernel, so
+  // all upper bits must be 0 for canonical addresses.
+  volatile int* const volatile p_int =
+      reinterpret_cast<int*>(0xabcdabcdabcdabcdULL);
+
+  EXPECT_EXIT(*p_int = 1234, ::testing::KilledBySignal(SIGSEGV), "SI_KERNEL");
+}
+#endif
 
 #endif  // #if !defined(ADDRESS_SANITIZER) && !defined(UNDEFINED_SANITIZER)
 

@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -372,32 +372,6 @@ TEST_F(ProcessTest, SetProcessBackgrounded) {
   EXPECT_EQ(old_priority, new_priority);
 }
 
-// Same as SetProcessBackgrounded but to this very process. It uses
-// a different code path at least for Windows.
-TEST_F(ProcessTest, SetProcessBackgroundedSelf) {
-  if (!Process::CanBackgroundProcesses())
-    return;
-  Process process = Process::Current();
-  int old_priority = process.GetPriority();
-#if BUILDFLAG(IS_WIN)
-  EXPECT_TRUE(process.SetProcessBackgrounded(true));
-  EXPECT_TRUE(process.IsProcessBackgrounded());
-  EXPECT_TRUE(process.SetProcessBackgrounded(false));
-  EXPECT_FALSE(process.IsProcessBackgrounded());
-#elif BUILDFLAG(IS_APPLE)
-  FakePortProvider provider;
-  EXPECT_TRUE(process.SetProcessBackgrounded(&provider, true));
-  EXPECT_TRUE(process.IsProcessBackgrounded(&provider));
-  EXPECT_TRUE(process.SetProcessBackgrounded(&provider, false));
-  EXPECT_FALSE(process.IsProcessBackgrounded(&provider));
-#else
-  process.SetProcessBackgrounded(true);
-  process.SetProcessBackgrounded(false);
-#endif
-  int new_priority = process.GetPriority();
-  EXPECT_EQ(old_priority, new_priority);
-}
-
 // Consumers can use WaitForExitWithTimeout(base::TimeDelta(), nullptr) to check
 // whether the process is still running. This may not be safe because of the
 // potential reusing of the process id. So we won't export Process::IsRunning()
@@ -475,7 +449,7 @@ TEST_F(ProcessTest, InitializePriorityEmptyProcess) {
   // TODO(b/172213843): base::Process is used by base::TestSuite::Initialize
   // before we can use ScopedFeatureList here. Update the test to allow the
   // use of ScopedFeatureList before base::TestSuite::Initialize runs.
-  if (!Process::OneGroupPerRendererEnabled())
+  if (!Process::OneGroupPerRendererEnabledForTesting())
     return;
 
   Process process;
@@ -485,7 +459,7 @@ TEST_F(ProcessTest, InitializePriorityEmptyProcess) {
 }
 
 TEST_F(ProcessTest, SetProcessBackgroundedOneCgroupPerRender) {
-  if (!Process::OneGroupPerRendererEnabled())
+  if (!Process::OneGroupPerRendererEnabledForTesting())
     return;
 
   base::test::TaskEnvironment task_env;
@@ -513,7 +487,7 @@ TEST_F(ProcessTest, SetProcessBackgroundedOneCgroupPerRender) {
 }
 
 TEST_F(ProcessTest, CleanUpBusyProcess) {
-  if (!Process::OneGroupPerRendererEnabled())
+  if (!Process::OneGroupPerRendererEnabledForTesting())
     return;
 
   base::test::TaskEnvironment task_env;
@@ -556,7 +530,7 @@ TEST_F(ProcessTest, CleanUpBusyProcess) {
 }
 
 TEST_F(ProcessTest, SetProcessBackgroundedEmptyToken) {
-  if (!Process::OneGroupPerRendererEnabled())
+  if (!Process::OneGroupPerRendererEnabledForTesting())
     return;
 
   Process process(SpawnChild("SimpleChildProcess"));
@@ -572,7 +546,7 @@ TEST_F(ProcessTest, SetProcessBackgroundedEmptyToken) {
 }
 
 TEST_F(ProcessTest, CleansUpStaleGroups) {
-  if (!Process::OneGroupPerRendererEnabled())
+  if (!Process::OneGroupPerRendererEnabledForTesting())
     return;
 
   base::test::TaskEnvironment task_env;
@@ -616,7 +590,7 @@ TEST_F(ProcessTest, CleansUpStaleGroups) {
 }
 
 TEST_F(ProcessTest, OneCgroupDoesNotCleanUpGroupsWithWrongPrefix) {
-  if (!Process::OneGroupPerRendererEnabled())
+  if (!Process::OneGroupPerRendererEnabledForTesting())
     return;
 
   base::test::TaskEnvironment task_env;

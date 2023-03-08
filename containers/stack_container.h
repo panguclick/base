@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -44,7 +44,8 @@ class StackAllocator : public FallbackAllocator {
   // maintaining this for as long as any containers using this allocator are
   // live.
   struct Source {
-    Source() : used_stack_buffer_(false) {}
+    Source() : used_stack_buffer_(false) {
+    }
 
     // Casts the buffer in its right type.
     NO_SANITIZE("cfi-unrelated-cast")
@@ -68,7 +69,7 @@ class StackAllocator : public FallbackAllocator {
   };
 
   // Used by containers when they want to refer to an allocator of type U.
-  template <typename U>
+  template<typename U>
   struct rebind {
     typedef StackAllocator<U, stack_capacity, FallbackAllocator> other;
   };
@@ -97,7 +98,8 @@ class StackAllocator : public FallbackAllocator {
   // should be fast.
   StackAllocator() : source_(nullptr) {}
 
-  explicit StackAllocator(Source* source) : source_(source) {}
+  explicit StackAllocator(Source* source) : source_(source) {
+  }
 
   // Actually do the allocation. Use the stack buffer if nobody has used it yet
   // and the size requested fits. Otherwise, fall through to the standard
@@ -105,7 +107,7 @@ class StackAllocator : public FallbackAllocator {
   pointer allocate(size_type n) {
     if (source_ && !source_->used_stack_buffer_ && n <= stack_capacity) {
       source_->used_stack_buffer_ = true;
-      return (pointer)(source_->stack_buffer());
+      return source_->stack_buffer();
     } else {
       return std::allocator_traits<FallbackAllocator>::allocate(*this, n);
     }
@@ -171,7 +173,9 @@ class StackContainer {
 #ifdef UNIT_TEST
   // Retrieves the stack source so that that unit tests can verify that the
   // buffer is being used properly.
-  const typename Allocator::Source& stack_data() const { return stack_data_; }
+  const typename Allocator::Source& stack_data() const {
+    return stack_data_;
+  }
 #endif
 
  protected:

@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,10 +16,6 @@
 #include "base/allocator/partition_allocator/partition_alloc_base/migration_adapter.h"
 #include "base/allocator/partition_allocator/partition_alloc_check.h"
 #include "build/build_config.h"
-
-#if defined(COMPILER_MSVC)
-#include <intrin.h>
-#endif
 
 namespace partition_alloc::internal::base::bits {
 
@@ -75,85 +71,6 @@ inline T* AlignUp(T* ptr, size_t alignment) {
 //
 // C does not have an operator to do this, but fortunately the various
 // compilers have built-ins that map to fast underlying processor instructions.
-//
-// Prefer the clang path on Windows, as _BitScanReverse() and friends are not
-// constexpr.
-#if defined(COMPILER_MSVC) && !defined(__clang__)
-
-template <typename T, int bits = sizeof(T) * 8>
-PA_ALWAYS_INLINE
-    typename std::enable_if<std::is_unsigned<T>::value && sizeof(T) <= 4,
-                            int>::type
-    CountLeadingZeroBits(T x) {
-  static_assert(bits > 0, "invalid instantiation");
-  unsigned long index;
-  return PA_LIKELY(_BitScanReverse(&index, static_cast<uint32_t>(x)))
-             ? (31 - index - (32 - bits))
-             : bits;
-}
-
-template <typename T, int bits = sizeof(T) * 8>
-PA_ALWAYS_INLINE
-    typename std::enable_if<std::is_unsigned<T>::value && sizeof(T) == 8,
-                            int>::type
-    CountLeadingZeroBits(T x) {
-  static_assert(bits > 0, "invalid instantiation");
-  unsigned long index;
-// MSVC only supplies _BitScanReverse64 when building for a 64-bit target.
-#if defined(ARCH_CPU_64_BITS)
-  return PA_LIKELY(_BitScanReverse64(&index, static_cast<uint64_t>(x)))
-             ? (63 - index)
-             : 64;
-#else
-  uint32_t left = static_cast<uint32_t>(x >> 32);
-  if (PA_LIKELY(_BitScanReverse(&index, left)))
-    return 31 - index;
-
-  uint32_t right = static_cast<uint32_t>(x);
-  if (PA_LIKELY(_BitScanReverse(&index, right)))
-    return 63 - index;
-
-  return 64;
-#endif
-}
-
-template <typename T, int bits = sizeof(T) * 8>
-PA_ALWAYS_INLINE
-    typename std::enable_if<std::is_unsigned<T>::value && sizeof(T) <= 4,
-                            int>::type
-    CountTrailingZeroBits(T x) {
-  static_assert(bits > 0, "invalid instantiation");
-  unsigned long index;
-  return PA_LIKELY(_BitScanForward(&index, static_cast<uint32_t>(x))) ? index
-                                                                      : bits;
-}
-
-template <typename T, int bits = sizeof(T) * 8>
-PA_ALWAYS_INLINE
-    typename std::enable_if<std::is_unsigned<T>::value && sizeof(T) == 8,
-                            int>::type
-    CountTrailingZeroBits(T x) {
-  static_assert(bits > 0, "invalid instantiation");
-  unsigned long index;
-// MSVC only supplies _BitScanForward64 when building for a 64-bit target.
-#if defined(ARCH_CPU_64_BITS)
-  return PA_LIKELY(_BitScanForward64(&index, static_cast<uint64_t>(x))) ? index
-                                                                        : 64;
-#else
-  uint32_t right = static_cast<uint32_t>(x);
-  if (PA_LIKELY(_BitScanForward(&index, right)))
-    return index;
-
-  uint32_t left = static_cast<uint32_t>(x >> 32);
-  if (PA_LIKELY(_BitScanForward(&index, left)))
-    return 32 + index;
-
-  return 64;
-#endif
-}
-
-#elif defined(COMPILER_GCC) || defined(__clang__)
-
 // __builtin_clz has undefined behaviour for an input of 0, even though there's
 // clearly a return value that makes sense, and even though some processor clz
 // instructions have defined behaviour for 0. We could drop to raw __asm__ to
@@ -164,11 +81,24 @@ PA_ALWAYS_INLINE constexpr
                             int>::type
     CountLeadingZeroBits(T value) {
   static_assert(bits > 0, "invalid instantiation");
+#if defined(COMPILER_MSVC) && !defined(__clang__)
+  // We would prefer to use the _BitScanReverse(64) intrinsics, but they
+  // aren't constexpr and thus unusable here.
+  if (PA_LIKELY(value)) {
+    int leading_zeros = 0;
+    constexpr T kMostSignificantBitMask = 1ull << (bits - 1);
+    for (; !(value & kMostSignificantBitMask); value <<= 1, ++leading_zeros) {
+    }
+    return leading_zeros;
+  }
+  return bits;
+#else
   return PA_LIKELY(value)
              ? bits == 64
                    ? __builtin_clzll(static_cast<uint64_t>(value))
                    : __builtin_clz(static_cast<uint32_t>(value)) - (32 - bits)
              : bits;
+#endif  // defined(COMPILER_MSVC) && !defined(__clang__)
 }
 
 template <typename T, int bits = sizeof(T) * 8>
@@ -176,13 +106,25 @@ PA_ALWAYS_INLINE constexpr
     typename std::enable_if<std::is_unsigned<T>::value && sizeof(T) <= 8,
                             int>::type
     CountTrailingZeroBits(T value) {
+#if defined(COMPILER_MSVC) && !defined(__clang__)
+  // We would prefer to use the _BitScanForward(64) intrinsics, but they
+  // aren't constexpr and thus unusable here.
+  if (PA_LIKELY(value)) {
+    int trailing_zeros = 0;
+    constexpr T kLeastSignificantBitMask = 1ull;
+    for (; !(value & kLeastSignificantBitMask); value >>= 1, ++trailing_zeros) {
+    }
+    return trailing_zeros;
+  }
+  return bits;
+
+#else
   return PA_LIKELY(value) ? bits == 64
                                 ? __builtin_ctzll(static_cast<uint64_t>(value))
                                 : __builtin_ctz(static_cast<uint32_t>(value))
                           : bits;
+#endif  // defined(COMPILER_MSVC) && !defined(__clang__)
 }
-
-#endif
 
 // Returns the integer i such as 2^i <= n < 2^(i+1).
 //

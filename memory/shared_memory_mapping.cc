@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -65,7 +65,8 @@ void SharedMemoryMapping::Unmap() {
   uint8_t* aligned_data =
       bits::AlignDown(mapped_span_.data(), SysInfo::VMAllocationGranularity());
   size_t adjusted_size =
-      mapped_span_.size() + (mapped_span_.data() - aligned_data);
+      mapped_span_.size() +
+      static_cast<size_t>(mapped_span_.data() - aligned_data);
   span<uint8_t> span_to_unmap = make_span(aligned_data, adjusted_size);
   mapper->Unmap(span_to_unmap);
 }

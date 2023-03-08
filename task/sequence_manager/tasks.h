@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -78,8 +78,6 @@ enum class WakeUpResolution { kLow, kHigh };
 
 // Represents a time at which a task wants to run.
 struct WakeUp {
-  static constexpr TimeDelta kDefaultLeeway = PendingTask::kDefaultLeeway;
-
   // is_null() for immediate wake up.
   TimeTicks time;
   // These are meaningless if is_immediate().
@@ -98,6 +96,11 @@ struct WakeUp {
 
   TimeTicks earliest_time() const;
   TimeTicks latest_time() const;
+};
+
+struct WorkDetails {
+  absl::optional<WakeUp> next_wake_up;
+  TimeDelta work_interval;
 };
 
 // PendingTask with extra metadata for SequenceManager.

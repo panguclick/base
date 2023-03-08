@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Copyright 2017 The Chromium Authors. All rights reserved.
+# Copyright 2017 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -41,7 +41,8 @@ def _Generate(java_file_paths,
               srcjar_path,
               proxy_opts,
               header_path=None,
-              namespace=''):
+              namespace='',
+              include_test_only=True):
   """Generates files required to perform JNI registration.
 
   Generates a srcjar containing a single class, GEN_JNI, that contains all
@@ -66,7 +67,8 @@ def _Generate(java_file_paths,
             _DictForPath,
             use_proxy_hash=proxy_opts.use_hash,
             enable_jni_multiplexing=proxy_opts.enable_jni_multiplexing,
-            namespace=namespace), java_file_paths):
+            namespace=namespace,
+            include_test_only=include_test_only), java_file_paths):
       if d:
         results.append(d)
 
@@ -135,7 +137,8 @@ def _Generate(java_file_paths,
 def _DictForPath(path,
                  use_proxy_hash=False,
                  enable_jni_multiplexing=False,
-                 namespace=''):
+                 namespace='',
+                 include_test_only=True):
   with open(path) as f:
     contents = jni_generator.RemoveComments(f.read())
     if '@JniIgnoreNatives' in contents:
@@ -148,7 +151,8 @@ def _DictForPath(path,
   natives += jni_generator.ProxyHelpers.ExtractStaticProxyNatives(
       fully_qualified_class=fully_qualified_class,
       contents=contents,
-      ptr_type='long')
+      ptr_type='long',
+      include_test_only=include_test_only)
   if len(natives) == 0:
     return None
   # The namespace for the content is separate from the namespace for the
@@ -321,7 +325,7 @@ ${REGISTER_NON_MAIN_DEX_NATIVES}
 
 def CreateProxyJavaFromDict(registration_dict, proxy_opts, forwarding=False):
   template = string.Template("""\
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -374,7 +378,7 @@ def CreateFromDict(registration_dict,
   """Returns the content of the header file."""
 
   template = string.Template("""\
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -842,7 +846,9 @@ def _MakeProxySignature(proxy_native,
     signature_template = string.Template("""
       // Hashed name: ${ALT_NAME}""" + native_method_line)
 
-    alt_name = proxy_native.hashed_proxy_name
+    # We add the prefix that is sometimes used so that codesearch can find it if
+    # someone searches a full method name from the stacktrace.
+    alt_name = f'Java_J_N_{proxy_native.hashed_proxy_name}'
     proxy_name = proxy_native.proxy_name
 
   return signature_template.substitute({
@@ -918,6 +924,9 @@ def main(argv):
       '--manual_jni_registration',
       action='store_true',
       help='Manually do JNI registration - required for crazy linker')
+  arg_parser.add_argument('--include_test_only',
+                          action='store_true',
+                          help='Whether to maintain ForTesting JNI methods.')
   args = arg_parser.parse_args(build_utils.ExpandFileArgs(argv[1:]))
 
   if not args.enable_proxy_mocks and args.require_mocks:
@@ -948,7 +957,8 @@ def main(argv):
             args.srcjar_path,
             proxy_opts=proxy_opts,
             header_path=args.header_path,
-            namespace=args.namespace)
+            namespace=args.namespace,
+            include_test_only=args.include_test_only)
 
   if args.depfile:
     build_utils.WriteDepfile(args.depfile, args.srcjar_path,

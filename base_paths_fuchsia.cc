@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -30,8 +30,8 @@ bool PathProviderFuchsia(int key, FilePath* result) {
       *result = base::FilePath(base::kPackageRootDirectoryPath);
       return true;
     case DIR_USER_DESKTOP:
-      // TODO(crbug.com/1231928): Implement this case.
-      NOTIMPLEMENTED_LOG_ONCE() << " for DIR_USER_DESKTOP.";
+      // TODO(crbug.com/1231928): Implement this case for DIR_USER_DESKTOP.
+      NOTIMPLEMENTED_LOG_ONCE();
       return false;
     case DIR_HOME:
       // TODO(crbug.com/1231928) Provide a proper base::GetHomeDir()
@@ -39,7 +39,8 @@ bool PathProviderFuchsia(int key, FilePath* result) {
       // crbug.com/1261284. For now, log, return false, and let the base
       // implementation handle it. This will end up returning a temporary
       // directory.
-      NOTIMPLEMENTED_LOG_ONCE() << "for DIR_HOME. Will use temporary dir.";
+      // This is for DIR_HOME. Will use temporary dir.
+      NOTIMPLEMENTED_LOG_ONCE();
       return false;
   }
 

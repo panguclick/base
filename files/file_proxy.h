@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -59,7 +59,7 @@ class BASE_EXPORT FileProxy : public SupportsWeakPtr<FileProxy> {
   //
   // This returns false if task posting to |task_runner| has failed.
   bool CreateOrOpen(const FilePath& file_path,
-                    int file_flags,
+                    uint32_t file_flags,
                     StatusCallback callback);
 
   // Creates a temporary file for writing. The path and an open file are

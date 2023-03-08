@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -25,7 +25,7 @@ int CalculateEventsPerSecond(uint64_t event_count,
 
   int events_per_second = 0;
   if (*last_event_count != 0) {
-    const int64_t events_delta = event_count - *last_event_count;
+    const uint64_t events_delta = event_count - *last_event_count;
     const base::TimeDelta time_delta = time - *last_calculated;
     DCHECK(!time_delta.is_zero());
     events_per_second = ClampRound(events_delta / time_delta.InSecondsF());
@@ -100,8 +100,8 @@ std::unique_ptr<ProcessMetrics> ProcessMetrics::CreateCurrentProcessMetrics() {
 }
 
 #if !BUILDFLAG(IS_FREEBSD) || !BUILDFLAG(IS_POSIX)
-double ProcessMetrics::GetPlatformIndependentCPUUsage() {
-  TimeDelta cumulative_cpu = GetCumulativeCPUUsage();
+double ProcessMetrics::GetPlatformIndependentCPUUsage(
+    TimeDelta cumulative_cpu) {
   TimeTicks time = TimeTicks::Now();
 
   if (last_cumulative_cpu_.is_zero()) {
@@ -113,7 +113,6 @@ double ProcessMetrics::GetPlatformIndependentCPUUsage() {
 
   TimeDelta cpu_time_delta = cumulative_cpu - last_cumulative_cpu_;
   TimeDelta time_delta = time - last_cpu_time_;
-  DCHECK(!time_delta.is_zero());
   if (time_delta.is_zero())
     return 0;
 
@@ -122,11 +121,14 @@ double ProcessMetrics::GetPlatformIndependentCPUUsage() {
 
   return 100.0 * cpu_time_delta / time_delta;
 }
+
+double ProcessMetrics::GetPlatformIndependentCPUUsage() {
+  return GetPlatformIndependentCPUUsage(GetCumulativeCPUUsage());
+}
 #endif
 
 #if BUILDFLAG(IS_WIN)
-double ProcessMetrics::GetPreciseCPUUsage() {
-  TimeDelta cumulative_cpu = GetPreciseCumulativeCPUUsage();
+double ProcessMetrics::GetPreciseCPUUsage(TimeDelta cumulative_cpu) {
   TimeTicks time = TimeTicks::Now();
 
   if (last_precise_cumulative_cpu_.is_zero()) {
@@ -146,6 +148,10 @@ double ProcessMetrics::GetPreciseCPUUsage() {
   last_cpu_time_for_precise_cpu_usage_ = time;
 
   return 100.0 * cpu_time_delta / time_delta;
+}
+
+double ProcessMetrics::GetPreciseCPUUsage() {
+  return GetPreciseCPUUsage(GetPreciseCumulativeCPUUsage());
 }
 #endif  // BUILDFLAG(IS_WIN)
 

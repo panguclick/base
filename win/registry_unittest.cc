@@ -1,4 +1,4 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -470,6 +470,18 @@ TEST_F(RegistryTest, TestMoveAssign) {
   DWORD foo = 0;
   ASSERT_EQ(key2.ReadValueDW(kFooValueName, &foo), ERROR_SUCCESS);
   EXPECT_EQ(foo, 1U);
+}
+
+// Verify that either the platform, or the API-integration, causes deletion
+// attempts via an invalid handle to fail with the expected error code.
+TEST_F(RegistryTest, DeleteWithInvalidRegKey) {
+  RegKey key;
+
+  static const wchar_t kFooName[] = L"foo";
+
+  EXPECT_EQ(key.DeleteKey(kFooName), ERROR_INVALID_HANDLE);
+  EXPECT_EQ(key.DeleteEmptyKey(kFooName), ERROR_INVALID_HANDLE);
+  EXPECT_EQ(key.DeleteValue(kFooName), ERROR_INVALID_HANDLE);
 }
 
 // A test harness for tests that use HKLM to test WoW redirection and such.

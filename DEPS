@@ -3,6 +3,7 @@ include_rules = [
   "+third_party/apple_apsl",
   "+third_party/boringssl/src/include",
   "+third_party/ced",
+  "+third_party/libevent",
   "+third_party/libunwindstack/src/libunwindstack/include",
   "+third_party/lss",
   "+third_party/modp_b64",
@@ -14,6 +15,8 @@ include_rules = [
   # //build/rust:cxx_cppdeps.
   "+third_party/rust/cxx",
   "+third_party/test_fonts",
+  # JSON Deserialization.
+  "+third_party/rust/serde_json_lenient/v0_1/wrapper",
 
   # These are implicitly brought in from the root, and we don't want them.
   "-ipc",
@@ -25,3 +28,10 @@ include_rules = [
   # //base/util can use //base but not vice versa.
   "-util",
 ]
+
+specific_include_rules = {
+  # Special case
+  "process/current_process(|_test)\.h": [
+    "+third_party/perfetto/protos/perfetto/trace/track_event/chrome_process_descriptor.pbzero.h",
+  ],
+}

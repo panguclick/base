@@ -1,10 +1,11 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "base/fuchsia/scoped_fx_logger.h"
 
 #include <lib/fdio/directory.h>
+#include <stdio.h>
 
 #include "base/command_line.h"
 #include "base/files/file_path.h"
@@ -92,7 +93,8 @@ void ScopedFxLogger::LogMessage(base::StringPiece file,
   for (const auto& tag : tags_) {
     buffer.WriteKeyValue("tag", tag);
   }
-  buffer.FlushRecord();
+  if (!buffer.FlushRecord())
+    fprintf(stderr, "fuchsia_syslog.LogBuffer.FlushRecord() failed\n");
 }
 
 ScopedFxLogger::ScopedFxLogger(std::vector<base::StringPiece> tags,

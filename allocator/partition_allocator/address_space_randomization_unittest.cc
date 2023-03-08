@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,8 @@
 #include <cstdint>
 #include <vector>
 
-#include "base/allocator/buildflags.h"
 #include "base/allocator/partition_allocator/page_allocator.h"
+#include "base/allocator/partition_allocator/partition_alloc_base/debug/debugging_buildflags.h"
 #include "base/allocator/partition_allocator/partition_alloc_check.h"
 #include "base/allocator/partition_allocator/random.h"
 #include "build/build_config.h"
@@ -264,7 +264,9 @@ TEST(PartitionAllocAddressSpaceRandomizationTest, CanMapInAslrRange) {
 
     uintptr_t address = AllocPages(
         requested_address, size, internal::PageAllocationGranularity(),
-        PageAccessibilityConfiguration::kReadWrite, PageTag::kPartitionAlloc);
+        PageAccessibilityConfiguration(
+            PageAccessibilityConfiguration::kReadWrite),
+        PageTag::kPartitionAlloc);
     ASSERT_NE(address, 0u);
     FreePages(address, size);
 

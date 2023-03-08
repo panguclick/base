@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,9 +8,9 @@ import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.annotations.JNINamespace;
-import org.chromium.base.annotations.MainDex;
 import org.chromium.base.annotations.NativeMethods;
 import org.chromium.base.library_loader.LibraryLoader;
+import org.chromium.build.annotations.MainDex;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -151,6 +151,14 @@ public class FeatureList {
     }
 
     /**
+     * @param featureName The name of the feature to query.
+     * @return Whether the feature has a test value configured.
+     */
+    public static boolean hasTestFeature(String featureName) {
+        return hasTestFeatures() && sTestFeatures.mFeatureFlags.containsKey(featureName);
+    }
+
+    /**
      * Returns the test value of the feature with the given name.
      *
      * @param featureName The name of the feature to query.
@@ -191,8 +199,9 @@ public class FeatureList {
         return null;
     }
 
+    @VisibleForTesting(otherwise = VisibleForTesting.PACKAGE_PRIVATE)
     @NativeMethods
-    interface Natives {
+    public interface Natives {
         boolean isInitialized();
     }
 }

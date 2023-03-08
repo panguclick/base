@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -99,9 +99,6 @@ struct Environment {
         v8::platform::InProcessStackDumping::kDisabled, nullptr);
 
     v8::V8::InitializePlatform(platform_.get());
-#ifdef V8_ENABLE_SANDBOX
-    v8::V8::InitializeSandbox();
-#endif
     v8::V8::Initialize();
     v8::Isolate::CreateParams create_params;
 

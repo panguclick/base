@@ -1,4 +1,4 @@
-# Copyright 2020 The Chromium Authors. All rights reserved.
+# Copyright 2020 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -41,23 +41,21 @@ class BaseWptScriptAdapter(common.BaseIsolatedScriptArgsAdapter):
     (usually platform-specific) logic."""
 
     def __init__(self, host=None):
+        self.host = host or Host()
+        self.fs = self.host.filesystem
+        self.path_finder = PathFinder(self.fs)
+        self.port = self.host.port_factory.get()
         super(BaseWptScriptAdapter, self).__init__()
         self._parser = self._override_options(self._parser)
-        if not host:
-            host = Host()
-        self.host = host
-        self.fs = host.filesystem
-        self.path_finder = PathFinder(self.fs)
-        self.port = host.port_factory.get()
-        # Path to the output of the test run. Comes from the args passed to the
-        # run, parsed after this constructor. Can be overwritten by tests.
-        self.wpt_output = None
         self.wptreport = None
         self._include_filename = None
         self.layout_test_results_subdir = 'layout-test-results'
+
+    @property
+    def wpt_binary(self):
         default_wpt_binary = os.path.join(
             common.SRC_DIR, "third_party", "wpt_tools", "wpt", "wpt")
-        self.wpt_binary = os.environ.get("WPT_BINARY", default_wpt_binary)
+        return os.environ.get("WPT_BINARY", default_wpt_binary)
 
     @property
     def wpt_root_dir(self):
@@ -152,13 +150,20 @@ class BaseWptScriptAdapter(common.BaseIsolatedScriptArgsAdapter):
         parser.add_argument(
             '--isolated-script-test-launcher-retry-limit',
             '--test-launcher-retry-limit',
-            metavar='LIMIT',
+            '--retry-unexpected',
+            metavar='RETRIES',
             type=int,
-            default=0,
-            help='Maximum number of times to rerun a failed test')
+            help=(
+                'Maximum number of times to rerun unexpectedly failed tests. '
+                'Defaults to 3 unless given an explicit list of tests to run.'))
         # `--gtest_filter` and `--isolated-script-test-filter` have slightly
         # different formats and behavior, so keep them as separate options.
         # See: crbug/1316164#c4
+
+        # TODO(crbug.com/1356318): This is a temporary hack to hide the
+        # inherited '--xvfb' option and force Xvfb to run always.
+        parser.add_argument('--xvfb', action='store_true', default=True,
+                            help=argparse.SUPPRESS)
         return parser
 
     def maybe_set_default_isolated_script_test_output(self):
@@ -191,10 +196,10 @@ class BaseWptScriptAdapter(common.BaseIsolatedScriptArgsAdapter):
             test_group = included_tests
             if pattern.startswith('-'):
                 test_group, pattern = excluded_tests, pattern[1:]
-            pattern_on_disk = self.fs.join(
-                self.wpt_root_dir,
-                self.path_finder.strip_wpt_path(pattern),
-            )
+            if self.path_finder.is_wpt_internal_path(pattern):
+                pattern_on_disk = self.path_finder.path_from_web_tests(pattern)
+            else:
+                pattern_on_disk = self.fs.join(self.wpt_root_dir, pattern)
             test_group.extend(glob.glob(pattern_on_disk))
         return included_tests, excluded_tests
 
@@ -214,11 +219,23 @@ class BaseWptScriptAdapter(common.BaseIsolatedScriptArgsAdapter):
     def generate_test_repeat_args(self, repeat_count):
         return ['--repeat=%d' % repeat_count]
 
-    # pylint: disable=unused-argument
+    @property
+    def _has_explicit_tests(self):
+        # TODO(crbug.com/1356318): `run_wpt_tests` has multiple ways to
+        # explicitly specify tests. Some are inherited from wptrunner, the rest
+        # from Chromium infra. After we consolidate `run_wpt_tests` and
+        # `wpt_common`, maybe we should build a single explicit test list to
+        # simplify this check?
+        for test_or_option in super().rest_args:
+            if not test_or_option.startswith('-'):
+                return True
+        return (getattr(self.options, 'include', None) or
+                getattr(self.options, 'include_file', None) or
+                getattr(self.options, 'gtest_filter', None) or
+                self._include_filename)
+
     def generate_test_launcher_retry_limit_args(self, retry_limit):
-        # TODO(crbug/1306222): wptrunner currently cannot rerun individual
-        # failed tests, so this flag is accepted but not used.
-        return []
+        return ['--retry-unexpected=%d' % retry_limit]
 
     def generate_sharding_args(self, total_shards, shard_index):
         return ['--total-chunks=%d' % total_shards,
@@ -242,8 +259,19 @@ class BaseWptScriptAdapter(common.BaseIsolatedScriptArgsAdapter):
         if report is not None:
             if not report:
                 report = self._default_wpt_report()
-            wpt_output = self.options.isolated_script_test_output
-            self.wptreport = self.fs.join(self.fs.dirname(wpt_output), report)
+            self.wptreport = self.fs.join(self.fs.dirname(self.wpt_output),
+                                          report)
+        if self.options.isolated_script_test_launcher_retry_limit is None:
+            self.options.isolated_script_test_launcher_retry_limit = (
+                self._default_retry_limit)
+
+    @property
+    def _default_retry_limit(self) -> int:
+        return 0 if self._has_explicit_tests else 3
+
+    @property
+    def wpt_output(self):
+        return self.options.isolated_script_test_output
 
     def _show_wpt_help(self):
         command = [
@@ -271,13 +299,11 @@ class BaseWptScriptAdapter(common.BaseIsolatedScriptArgsAdapter):
 
         rest_args = list(self._wpt_run_args)
         rest_args.extend([
-            # By default, wpt will treat unexpected passes as errors, so we
-            # disable that to be consistent with Chromium CI.
-            '--no-fail-on-unexpected-pass',
             '--no-pause-after-test',
             '--no-capture-stdio',
             '--no-manifest-download',
             '--tests=%s' % self.wpt_root_dir,
+            '--metadata=%s' % self.wpt_root_dir,
             '--mojojs-path=%s' % self.mojo_js_directory,
         ])
 
@@ -317,10 +343,7 @@ class BaseWptScriptAdapter(common.BaseIsolatedScriptArgsAdapter):
                 rest_args.append(unknown_arg)
         return rest_args
 
-    def do_post_test_run_tasks(self):
-        if not self.wpt_output and self.options:
-            self.wpt_output = self.options.isolated_script_test_output
-
+    def process_and_upload_results(self):
         command = [
             self.select_python_executable(),
             os.path.join(BLINK_TOOLS_DIR, 'wpt_process_results.py'),
@@ -337,9 +360,11 @@ class BaseWptScriptAdapter(common.BaseIsolatedScriptArgsAdapter):
         if self.options.verbose:
             command.append('--verbose')
         if self.wptreport:
-            command.extend(['--wpt-report', self.wptreport])
-        common.run_command(command)
+            command.extend(['--wpt-report',
+                            self.wptreport])
+        return common.run_command(command)
 
+    def clean_up_after_test_run(self):
         if self._include_filename:
             self.fs.remove(self._include_filename)
 

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -42,7 +42,6 @@
 #include <ostream>
 #include <string>
 
-#include "base/allocator/partition_allocator/partition_alloc_base/debug/alias.h"
 #include "base/allocator/partition_allocator/partition_alloc_base/posix/eintr_wrapper.h"
 
 #if BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
@@ -68,12 +67,13 @@ int g_min_log_level = 0;
 // A log message handler that gets notified of every log message we process.
 LogMessageHandlerFunction g_log_message_handler = nullptr;
 
-void WriteToFd(int fd, const char* data, size_t length) {
+#if !BUILDFLAG(IS_WIN)
+void WriteToStderr(const char* data, size_t length) {
   size_t bytes_written = 0;
   int rv;
   while (bytes_written < length) {
     rv = PA_HANDLE_EINTR(
-        write(fd, data + bytes_written, length - bytes_written));
+        write(STDERR_FILENO, data + bytes_written, length - bytes_written));
     if (rv < 0) {
       // Give up, nothing we can do now.
       break;
@@ -81,16 +81,32 @@ void WriteToFd(int fd, const char* data, size_t length) {
     bytes_written += rv;
   }
 }
+#else   // !BUILDFLAG(IS_WIN)
+void WriteToStderr(const char* data, size_t length) {
+  HANDLE handle = ::GetStdHandle(STD_ERROR_HANDLE);
+  const char* ptr = data;
+  const char* ptr_end = data + length;
+  while (ptr < ptr_end) {
+    DWORD bytes_written = 0;
+    if (!::WriteFile(handle, ptr, ptr_end - ptr, &bytes_written, nullptr) ||
+        bytes_written == 0) {
+      // Give up, nothing we can do now.
+      break;
+    }
+    ptr += bytes_written;
+  }
+}
+#endif  // !BUILDFLAG(IS_WIN)
 
 }  // namespace
 
-#if defined(DCHECK_IS_CONFIGURABLE)
+#if BUILDFLAG(PA_DCHECK_IS_CONFIGURABLE)
 // In DCHECK-enabled Chrome builds, allow the meaning of LOGGING_DCHECK to be
 // determined at run-time. We default it to INFO, to avoid it triggering
 // crashes before the run-time has explicitly chosen the behaviour.
 PA_COMPONENT_EXPORT(PARTITION_ALLOC)
 logging::LogSeverity LOGGING_DCHECK = LOGGING_INFO;
-#endif  // defined(DCHECK_IS_CONFIGURABLE)
+#endif  // BUILDFLAG(PA_DCHECK_IS_CONFIGURABLE)
 
 // This is never instantiated, it's just used for EAT_STREAM_PARAMETERS to have
 // an object of the correct type on the LHS of the unused part of the ternary
@@ -246,18 +262,15 @@ ErrnoLogMessage::~ErrnoLogMessage() {
 
 void RawLog(int level, const char* message) {
   if (level >= g_min_log_level && message) {
+#if !BUILDFLAG(IS_WIN)
     const size_t message_len = strlen(message);
-    WriteToFd(STDERR_FILENO, message, message_len);
+#else   // !BUILDFLAG(IS_WIN)
+    const size_t message_len = ::lstrlenA(message);
+#endif  // !BUILDFLAG(IS_WIN)
+    WriteToStderr(message, message_len);
 
     if (message_len > 0 && message[message_len - 1] != '\n') {
-      int rv;
-      do {
-        rv = PA_HANDLE_EINTR(write(STDERR_FILENO, "\n", 1));
-        if (rv < 0) {
-          // Give up, nothing we can do now.
-          break;
-        }
-      } while (rv != 1);
+      WriteToStderr("\n", 1);
     }
   }
 

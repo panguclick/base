@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -63,7 +63,10 @@ BASE_EXPORT void UmaHistogramExactLinear(const char* name,
 //     kMaxValue = kOpenBookmark,
 //   };
 //   base::UmaHistogramEnumeration("My.Enumeration",
-//                                 NewTabPageAction::kUseSearchbox);
+//                                 NewTabPageAction::kClickTitle);
+//
+// Note that there are code that refer implementation details of this function.
+// Keep them synchronized.
 template <typename T>
 void UmaHistogramEnumeration(const std::string& name, T sample) {
   static_assert(std::is_enum<T>::value, "T is not an enum.");
@@ -104,7 +107,7 @@ void UmaHistogramEnumeration(const char* name, T sample) {
 //     kCount,
 //   };
 //   base::UmaHistogramEnumeration("My.Enumeration",
-//                                 NewTabPageAction::kUseSearchbox,
+//                                 NewTabPageAction::kClickTitle,
 //                                 kCount);
 // Note: The value in |sample| must be strictly less than |enum_size|. This is
 // otherwise functionally equivalent to the above.
@@ -152,12 +155,12 @@ BASE_EXPORT void UmaHistogramCustomCounts(const std::string& name,
                                           int sample,
                                           int min,
                                           int exclusive_max,
-                                          int buckets);
+                                          size_t buckets);
 BASE_EXPORT void UmaHistogramCustomCounts(const char* name,
                                           int sample,
                                           int min,
                                           int exclusive_max,
-                                          int buckets);
+                                          size_t buckets);
 
 // Counts specialization for maximum counts 100, 1000, 10k, 100k, 1M and 10M.
 BASE_EXPORT void UmaHistogramCounts100(const std::string& name, int sample);
@@ -178,12 +181,12 @@ BASE_EXPORT void UmaHistogramCustomTimes(const std::string& name,
                                          TimeDelta sample,
                                          TimeDelta min,
                                          TimeDelta max,
-                                         int buckets);
+                                         size_t buckets);
 BASE_EXPORT void UmaHistogramCustomTimes(const char* name,
                                          TimeDelta sample,
                                          TimeDelta min,
                                          TimeDelta max,
-                                         int buckets);
+                                         size_t buckets);
 // For short timings from 1 ms up to 10 seconds (50 buckets).
 BASE_EXPORT void UmaHistogramTimes(const std::string& name, TimeDelta sample);
 BASE_EXPORT void UmaHistogramTimes(const char* name, TimeDelta sample);
@@ -206,12 +209,12 @@ BASE_EXPORT void UmaHistogramCustomMicrosecondsTimes(const std::string& name,
                                                      TimeDelta sample,
                                                      TimeDelta min,
                                                      TimeDelta max,
-                                                     int buckets);
+                                                     size_t buckets);
 BASE_EXPORT void UmaHistogramCustomMicrosecondsTimes(const char* name,
                                                      TimeDelta sample,
                                                      TimeDelta min,
                                                      TimeDelta max,
-                                                     int buckets);
+                                                     size_t buckets);
 
 // For microseconds timings from 1 microsecond up to 10 seconds (50 buckets).
 BASE_EXPORT void UmaHistogramMicrosecondsTimes(const std::string& name,

@@ -211,13 +211,11 @@ add_library(
   asn1/a_mbstr.c
   asn1/a_object.c
   asn1/a_octet.c
-  asn1/a_print.c
   asn1/a_strex.c
   asn1/a_strnid.c
   asn1/a_time.c
   asn1/a_type.c
   asn1/a_utctm.c
-  asn1/a_utf8.c
   asn1/asn1_lib.c
   asn1/asn1_par.c
   asn1/asn_pack.c
@@ -229,7 +227,7 @@ add_library(
   asn1/tasn_new.c
   asn1/tasn_typ.c
   asn1/tasn_utl.c
-  asn1/time_support.c
+  asn1/posix_time.c
   base64/base64.c
   bio/bio.c
   bio/bio_mem.c
@@ -253,7 +251,6 @@ add_library(
   chacha/chacha.c
   cipher_extra/cipher_extra.c
   cipher_extra/derive_key.c
-  cipher_extra/e_aesccm.c
   cipher_extra/e_aesctrhmac.c
   cipher_extra/e_aesgcmsiv.c
   cipher_extra/e_chacha20poly1305.c
@@ -263,12 +260,13 @@ add_library(
   cipher_extra/e_rc4.c
   cipher_extra/e_tls.c
   cipher_extra/tls_cbc.c
-  cmac/cmac.c
   conf/conf.c
   cpu_aarch64_apple.c
+  cpu_aarch64_freebsd.c
   cpu_aarch64_fuchsia.c
   cpu_aarch64_linux.c
   cpu_aarch64_win.c
+  cpu_arm_freebsd.c
   cpu_arm_linux.c
   cpu_arm.c
   cpu_intel.c
@@ -290,7 +288,6 @@ add_library(
   err/err.c
   err_data.c
   engine/engine.c
-  evp/digestsign.c
   evp/evp.c
   evp/evp_asn1.c
   evp/evp_ctx.c
@@ -299,6 +296,7 @@ add_library(
   evp/p_ec_asn1.c
   evp/p_ed25519.c
   evp/p_ed25519_asn1.c
+  evp/p_hkdf.c
   evp/p_rsa.c
   evp/p_rsa_asn1.c
   evp/p_x25519.c
@@ -402,7 +400,6 @@ add_library(
   x509/x_x509a.c
   x509v3/pcy_cache.c
   x509v3/pcy_data.c
-  x509v3/pcy_lib.c
   x509v3/pcy_map.c
   x509v3/pcy_node.c
   x509v3/pcy_tree.c
@@ -441,7 +438,11 @@ target_include_directories(crypto INTERFACE
  $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
  $<INSTALL_INTERFACE:include>
 )
-install(TARGETS crypto EXPORT OpenSSLTargets DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(TARGETS crypto EXPORT OpenSSLTargets
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
 set_property(TARGET crypto PROPERTY EXPORT_NAME Crypto)
 
 if(FIPS_SHARED)
@@ -468,8 +469,13 @@ endif()
 
 SET_TARGET_PROPERTIES(crypto PROPERTIES LINKER_LANGUAGE C)
 
-if(NOT WIN32 AND NOT ANDROID)
-  target_link_libraries(crypto pthread)
+if(WIN32)
+  target_link_libraries(crypto ws2_32)
+endif()
+
+if(NOT ANDROID)
+  find_package(Threads REQUIRED)
+  target_link_libraries(crypto Threads::Threads)
 endif()
 
 # Every target depends on crypto, so we add libcxx as a dependency here to
@@ -505,7 +511,6 @@ add_executable(
   chacha/chacha_test.cc
   cipher_extra/aead_test.cc
   cipher_extra/cipher_test.cc
-  cmac/cmac_test.cc
   compiler_test.cc
   conf/conf_test.cc
   constant_time_test.cc
@@ -525,6 +530,7 @@ add_executable(
   evp/scrypt_test.cc
   fipsmodule/aes/aes_test.cc
   fipsmodule/bn/bn_test.cc
+  fipsmodule/cmac/cmac_test.cc
   fipsmodule/ec/ec_test.cc
   fipsmodule/ec/p256-nistz_test.cc
   fipsmodule/ecdsa/ecdsa_test.cc
@@ -532,6 +538,7 @@ add_executable(
   fipsmodule/modes/gcm_test.cc
   fipsmodule/rand/ctrdrbg_test.cc
   fipsmodule/rand/fork_detect_test.cc
+  fipsmodule/service_indicator/service_indicator_test.cc
   fipsmodule/sha/sha_test.cc
   hkdf/hkdf_test.cc
   hpke/hpke_test.cc

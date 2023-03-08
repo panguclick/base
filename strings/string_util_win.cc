@@ -1,10 +1,11 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "base/strings/string_util_win.h"
 
-#include "base/strings/string_util_internal.h"
+#include "base/ranges/algorithm.h"
+#include "base/strings/string_util_impl_helpers.h"
 
 namespace base {
 
@@ -71,12 +72,8 @@ bool ContainsOnlyChars(WStringPiece input, WStringPiece characters) {
   return input.find_first_not_of(characters) == StringPiece::npos;
 }
 
-bool LowerCaseEqualsASCII(WStringPiece str, StringPiece lowercase_ascii) {
-  return internal::DoLowerCaseEqualsASCII(str, lowercase_ascii);
-}
-
 bool EqualsASCII(WStringPiece str, StringPiece ascii) {
-  return std::equal(ascii.begin(), ascii.end(), str.begin(), str.end());
+  return ranges::equal(ascii, str);
 }
 
 bool StartsWith(WStringPiece str,

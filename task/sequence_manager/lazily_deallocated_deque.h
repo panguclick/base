@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -226,10 +226,10 @@ class LazilyDeallocatedDeque {
   }
 
  private:
-  // FRIEND_TEST_ALL_PREFIXES(LazilyDeallocatedDequeTest, RingPushFront);
-  // FRIEND_TEST_ALL_PREFIXES(LazilyDeallocatedDequeTest, RingPushBack);
-  // FRIEND_TEST_ALL_PREFIXES(LazilyDeallocatedDequeTest, RingCanPush);
-  // FRIEND_TEST_ALL_PREFIXES(LazilyDeallocatedDequeTest, RingPushPopPushPop);
+  FRIEND_TEST_ALL_PREFIXES(LazilyDeallocatedDequeTest, RingPushFront);
+  FRIEND_TEST_ALL_PREFIXES(LazilyDeallocatedDequeTest, RingPushBack);
+  FRIEND_TEST_ALL_PREFIXES(LazilyDeallocatedDequeTest, RingCanPush);
+  FRIEND_TEST_ALL_PREFIXES(LazilyDeallocatedDequeTest, RingPushPopPushPop);
 
   struct Ring {
     explicit Ring(size_t capacity)

@@ -1,4 +1,4 @@
-// Copyright (c) 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -21,9 +21,10 @@ class PageWithBitmap final {
   PageWithBitmap()
       : base_(AllocPages(kSuperPageSize,
                          kSuperPageAlignment,
-                         PageAccessibilityConfiguration::kReadWrite,
+                         PageAccessibilityConfiguration(
+                             PageAccessibilityConfiguration::kReadWrite),
                          PageTag::kPartitionAlloc)),
-        bitmap_(new (reinterpret_cast<void*>(base_)) TestBitmap) {}
+        bitmap_(new(reinterpret_cast<void*>(base_)) TestBitmap) {}
 
   PageWithBitmap(const PageWithBitmap&) = delete;
   PageWithBitmap& operator=(const PageWithBitmap&) = delete;

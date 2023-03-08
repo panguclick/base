@@ -1,4 +1,4 @@
-// Copyright (c) 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,15 +6,17 @@
 
 #include <cstdint>
 
-#include "base/allocator/buildflags.h"
 #include "base/allocator/partition_allocator/address_pool_manager_bitmap.h"
+#include "base/allocator/partition_allocator/freeslot_bitmap.h"
 #include "base/allocator/partition_allocator/oom.h"
 #include "base/allocator/partition_allocator/page_allocator.h"
 #include "base/allocator/partition_allocator/partition_address_space.h"
 #include "base/allocator/partition_allocator/partition_alloc_base/bits.h"
 #include "base/allocator/partition_allocator/partition_alloc_base/compiler_specific.h"
 #include "base/allocator/partition_allocator/partition_alloc_base/component_export.h"
+#include "base/allocator/partition_allocator/partition_alloc_base/debug/debugging_buildflags.h"
 #include "base/allocator/partition_allocator/partition_alloc_base/thread_annotations.h"
+#include "base/allocator/partition_allocator/partition_alloc_buildflags.h"
 #include "base/allocator/partition_allocator/partition_alloc_check.h"
 #include "base/allocator/partition_allocator/partition_alloc_config.h"
 #include "base/allocator/partition_allocator/partition_alloc_constants.h"
@@ -22,10 +24,18 @@
 #include "base/allocator/partition_allocator/partition_cookie.h"
 #include "base/allocator/partition_allocator/partition_oom.h"
 #include "base/allocator/partition_allocator/partition_page.h"
+#include "base/allocator/partition_allocator/pkey.h"
 #include "base/allocator/partition_allocator/reservation_offset_table.h"
-#include "base/allocator/partition_allocator/starscan/pcscan.h"
 #include "base/allocator/partition_allocator/tagging.h"
 #include "build/build_config.h"
+
+#if defined(PA_ENABLE_MAC11_MALLOC_SIZE_HACK) && BUILDFLAG(IS_APPLE)
+#include "base/allocator/partition_allocator/partition_alloc_base/mac/mac_util.h"
+#endif  // defined(PA_ENABLE_MAC11_MALLOC_SIZE_HACK) && BUILDFLAG(IS_APPLE)
+
+#if BUILDFLAG(STARSCAN)
+#include "base/allocator/partition_allocator/starscan/pcscan.h"
+#endif  // BUILDFLAG(STARSCAN)
 
 #if BUILDFLAG(IS_WIN)
 #include <windows.h>
@@ -151,7 +161,7 @@ class PartitionRootEnumerator {
 
 #endif  // PA_USE_PARTITION_ROOT_ENUMERATOR
 
-#if BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+#if BUILDFLAG(ENABLE_PARTITION_ALLOC_AS_MALLOC_SUPPORT)
 
 namespace {
 
@@ -273,9 +283,22 @@ void PartitionAllocMallocHookOnAfterForkInChild() {
 }
 #endif  // BUILDFLAG(IS_APPLE)
 
-#endif  // BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+#endif  // BUILDFLAG(ENABLE_PARTITION_ALLOC_AS_MALLOC_SUPPORT)
 
 namespace internal {
+
+namespace {
+// 64 was chosen arbitrarily, as it seems like a reasonable trade-off between
+// performance and purging opportunity. Higher value (i.e. smaller slots)
+// wouldn't necessarily increase chances of purging, but would result in
+// more work and larger |slot_usage| array. Lower value would probably decrease
+// chances of purging. Not empirically tested.
+constexpr size_t kMaxPurgeableSlotsPerSystemPage = 64;
+PAGE_ALLOCATOR_CONSTANTS_DECLARE_CONSTEXPR PA_ALWAYS_INLINE size_t
+MinPurgeableSlotSize() {
+  return SystemPageSize() / kMaxPurgeableSlotsPerSystemPage;
+}
+}  // namespace
 
 template <bool thread_safe>
 static size_t PartitionPurgeSlotSpan(
@@ -284,7 +307,8 @@ static size_t PartitionPurgeSlotSpan(
   auto* root = PartitionRoot<thread_safe>::FromSlotSpan(slot_span);
   const internal::PartitionBucket<thread_safe>* bucket = slot_span->bucket;
   size_t slot_size = bucket->slot_size;
-  if (slot_size < SystemPageSize() || !slot_span->num_allocated_slots)
+
+  if (slot_size < MinPurgeableSlotSize() || !slot_span->num_allocated_slots)
     return 0;
 
   size_t bucket_num_slots = bucket->get_slots_per_span();
@@ -307,7 +331,7 @@ static size_t PartitionPurgeSlotSpan(
 #if defined(PAGE_ALLOCATOR_CONSTANTS_ARE_CONSTEXPR)
   constexpr size_t kMaxSlotCount =
       (PartitionPageSize() * kMaxPartitionPagesPerRegularSlotSpan) /
-      SystemPageSize();
+      MinPurgeableSlotSize();
 #elif BUILDFLAG(IS_APPLE) || (BUILDFLAG(IS_LINUX) && defined(ARCH_CPU_ARM64))
   // It's better for slot_usage to be stack-allocated and fixed-size, which
   // demands that its size be constexpr. On IS_APPLE and Linux on arm64,
@@ -315,10 +339,11 @@ static size_t PartitionPurgeSlotSpan(
   // what the run time page size is, kMaxSlotCount can always be simplified
   // to this expression.
   constexpr size_t kMaxSlotCount =
-      4 * internal::kMaxPartitionPagesPerRegularSlotSpan;
+      4 * kMaxPurgeableSlotsPerSystemPage *
+      internal::kMaxPartitionPagesPerRegularSlotSpan;
   PA_CHECK(kMaxSlotCount == (PartitionPageSize() *
                              internal::kMaxPartitionPagesPerRegularSlotSpan) /
-                                SystemPageSize());
+                                MinPurgeableSlotSize());
 #endif
   PA_DCHECK(bucket_num_slots <= kMaxSlotCount);
   PA_DCHECK(slot_span->num_unprovisioned_slots < bucket_num_slots);
@@ -336,12 +361,10 @@ static size_t PartitionPurgeSlotSpan(
   // slots are not in use.
   for (PartitionFreelistEntry* entry = slot_span->get_freelist_head(); entry;
        /**/) {
-    size_t slot_index = (::partition_alloc::internal::UnmaskPtr(
-                             reinterpret_cast<uintptr_t>(entry)) -
-                         slot_span_start) /
-                        slot_size;
-    PA_DCHECK(slot_index < num_slots);
-    slot_usage[slot_index] = 0;
+    size_t slot_number =
+        bucket->GetSlotNumber(SlotStartPtr2Addr(entry) - slot_span_start);
+    PA_DCHECK(slot_number < num_slots);
+    slot_usage[slot_number] = 0;
 #if !BUILDFLAG(IS_WIN)
     // If we have a slot where the encoded next pointer is 0, we can actually
     // discard that entry because touching a discarded page is guaranteed to
@@ -349,7 +372,7 @@ static size_t PartitionPurgeSlotSpan(
     // effective on big-endian machines because the masking function is
     // negation.)
     if (entry->IsEncodedNextPtrZero())
-      last_slot = slot_index;
+      last_slot = slot_number;
 #endif
     entry = entry->GetNext(slot_size);
   }
@@ -368,7 +391,20 @@ static size_t PartitionPurgeSlotSpan(
     size_t unprovisioned_bytes = 0;
     uintptr_t begin_addr = slot_span_start + (num_slots * slot_size);
     uintptr_t end_addr = begin_addr + (slot_size * truncated_slots);
-    begin_addr = RoundUpToSystemPage(begin_addr);
+
+    // The slots that do not contain discarded pages should not be included to
+    // |truncated_slots|. Detects those slots and fixes |truncated_slots| and
+    // |num_slots| accordingly.
+    uintptr_t rounded_up_truncatation_begin_addr =
+        RoundUpToSystemPage(begin_addr);
+    while (begin_addr + slot_size <= rounded_up_truncatation_begin_addr) {
+      begin_addr += slot_size;
+      PA_DCHECK(truncated_slots);
+      --truncated_slots;
+      ++num_slots;
+    }
+    begin_addr = rounded_up_truncatation_begin_addr;
+
     // We round the end address here up and not down because we're at the end of
     // a slot span, so we "own" all the way up the page boundary.
     end_addr = RoundUpToSystemPage(end_addr);
@@ -410,31 +446,69 @@ static size_t PartitionPurgeSlotSpan(
       slot_span->SetFreelistHead(head);
 
       PA_DCHECK(num_new_entries == num_slots - slot_span->num_allocated_slots);
+
+#if BUILDFLAG(USE_FREESLOT_BITMAP)
+      FreeSlotBitmapReset(slot_span_start + (slot_size * num_slots), end_addr,
+                          slot_size);
+#endif
+
       // Discard the memory.
       ScopedSyscallTimer timer{root};
       DiscardSystemPages(begin_addr, unprovisioned_bytes);
     }
   }
 
-  // Next, walk the slots and for any not in use, consider where the system page
-  // boundaries occur. We can release any system pages back to the system as
-  // long as we don't interfere with a freelist pointer or an adjacent slot.
+  if (slot_size < SystemPageSize()) {
+    // Returns here because implementing the following steps for smaller slot
+    // size will need a complicated logic and make the code messy.
+    return discardable_bytes;
+  }
+
+  // Next, walk the slots and for any not in use, consider which system pages
+  // are no longer needed. We can release any system pages back to the system as
+  // long as we don't interfere with a freelist pointer or an adjacent used
+  // slot.
   for (size_t i = 0; i < num_slots; ++i) {
-    if (slot_usage[i])
+    if (slot_usage[i]) {
       continue;
+    }
+
     // The first address we can safely discard is just after the freelist
     // pointer. There's one quirk: if the freelist pointer is actually nullptr,
     // we can discard that pointer value too.
     uintptr_t begin_addr = slot_span_start + (i * slot_size);
     uintptr_t end_addr = begin_addr + slot_size;
+
+    bool can_discard_free_list_pointer = false;
 #if !BUILDFLAG(IS_WIN)
-    if (i != last_slot)
+    if (i != last_slot) {
       begin_addr += sizeof(internal::PartitionFreelistEntry);
+    } else {
+      can_discard_free_list_pointer = true;
+    }
 #else
     begin_addr += sizeof(internal::PartitionFreelistEntry);
 #endif
-    begin_addr = RoundUpToSystemPage(begin_addr);
+
+    uintptr_t rounded_up_begin_addr = RoundUpToSystemPage(begin_addr);
+    uintptr_t rounded_down_begin_addr = RoundDownToSystemPage(begin_addr);
     end_addr = RoundDownToSystemPage(end_addr);
+
+    // |rounded_up_begin_addr| could be greater than |end_addr| only if slot
+    // size was less than system page size, or if free list pointer crossed the
+    // page boundary. Neither is possible here.
+    PA_DCHECK(rounded_up_begin_addr <= end_addr);
+
+    if (rounded_down_begin_addr < rounded_up_begin_addr && i != 0 &&
+        !slot_usage[i - 1] && can_discard_free_list_pointer) {
+      // This slot contains a partial page in the beginning. The rest of that
+      // page is contained in the slot[i-1], which is also discardable.
+      // Therefore we can discard this page.
+      begin_addr = rounded_down_begin_addr;
+    } else {
+      begin_addr = rounded_up_begin_addr;
+    }
+
     if (begin_addr < end_addr) {
       size_t partial_slot_bytes = end_addr - begin_addr;
       discardable_bytes += partial_slot_bytes;
@@ -444,6 +518,7 @@ static size_t PartitionPurgeSlotSpan(
       }
     }
   }
+
   return discardable_bytes;
 }
 
@@ -478,12 +553,11 @@ static void PartitionDumpSlotSpanStats(
 
   if (slot_span->CanStoreRawSize()) {
     stats_out->active_bytes += static_cast<uint32_t>(slot_span->GetRawSize());
-    stats_out->active_count += 1;
   } else {
     stats_out->active_bytes +=
         (slot_span->num_allocated_slots * stats_out->bucket_slot_size);
-    stats_out->active_count += slot_span->num_allocated_slots;
   }
+  stats_out->active_count += slot_span->num_allocated_slots;
 
   size_t slot_span_bytes_resident = RoundUpToSystemPage(
       (bucket_num_slots - slot_span->num_unprovisioned_slots) *
@@ -562,6 +636,16 @@ void DCheckIfManagedByPartitionAllocBRPPool(uintptr_t address) {
 }
 #endif
 
+#if BUILDFLAG(ENABLE_PKEYS)
+void PartitionAllocPkeyInit(int pkey) {
+  PkeySettings::settings.enabled = true;
+  PartitionAddressSpace::InitPkeyPool(pkey);
+  // Call TagGlobalsWithPkey last since we might not have write permissions to
+  // to memory tagged with `pkey` at this point.
+  TagGlobalsWithPkey(pkey);
+}
+#endif  // BUILDFLAG(ENABLE_PKEYS)
+
 }  // namespace internal
 
 template <bool thread_safe>
@@ -605,7 +689,7 @@ template <bool thread_safe>
 #endif  // #if !defined(ARCH_CPU_64_BITS)
 
   // Out of memory can be due to multiple causes, such as:
-  // - Out of GigaCage virtual address space
+  // - Out of virtual address space in the desired pool
   // - Out of commit due to either our process, or another one
   // - Excessive allocations in the current process
   //
@@ -639,12 +723,63 @@ void PartitionRoot<thread_safe>::DestructForTesting() {
   auto* curr = first_extent;
   while (curr != nullptr) {
     auto* next = curr->next;
+    uintptr_t address = SuperPagesBeginFromExtent(curr);
+    size_t size =
+        internal::kSuperPageSize * curr->number_of_consecutive_super_pages;
+#if !defined(PA_HAS_64_BITS_POINTERS)
+    internal::AddressPoolManager::GetInstance().MarkUnused(pool_handle, address,
+                                                           size);
+#endif
     internal::AddressPoolManager::GetInstance().UnreserveAndDecommit(
-        pool_handle, SuperPagesBeginFromExtent(curr),
-        internal::kSuperPageSize * curr->number_of_consecutive_super_pages);
+        pool_handle, address, size);
     curr = next;
   }
 }
+
+#if defined(PA_ENABLE_MAC11_MALLOC_SIZE_HACK)
+template <bool thread_safe>
+void PartitionRoot<thread_safe>::EnableMac11MallocSizeHackForTesting() {
+  flags.mac11_malloc_size_hack_enabled_ = true;
+}
+#endif  // defined(PA_ENABLE_MAC11_MALLOC_SIZE_HACK)
+
+#if BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT) && \
+    !defined(PA_HAS_64_BITS_POINTERS)
+namespace {
+std::atomic<bool> g_reserve_brp_guard_region_called;
+// An address constructed by repeating `kQuarantinedByte` shouldn't never point
+// to valid memory. Preemptively reserve a memory region around that address and
+// make it inaccessible. Not needed for 64-bit platforms where the address is
+// guaranteed to be non-canonical. Safe to call multiple times.
+void ReserveBackupRefPtrGuardRegionIfNeeded() {
+  bool expected = false;
+  // No need to block execution for potential concurrent initialization, merely
+  // want to make sure this is only called once.
+  if (!g_reserve_brp_guard_region_called.compare_exchange_strong(expected,
+                                                                 true))
+    return;
+
+  size_t alignment = internal::PageAllocationGranularity();
+  uintptr_t requested_address;
+  memset(&requested_address, internal::kQuarantinedByte,
+         sizeof(requested_address));
+  requested_address = RoundDownToPageAllocationGranularity(requested_address);
+
+  // Request several pages so that even unreasonably large C++ objects stay
+  // within the inaccessible region. If some of the pages can't be reserved,
+  // it's still preferable to try and reserve the rest.
+  for (size_t i = 0; i < 4; ++i) {
+    [[maybe_unused]] uintptr_t allocated_address =
+        AllocPages(requested_address, alignment, alignment,
+                   PageAccessibilityConfiguration(
+                       PageAccessibilityConfiguration::kInaccessible),
+                   PageTag::kPartitionAlloc);
+    requested_address += alignment;
+  }
+}
+}  // namespace
+#endif  // BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT) &&
+        // !defined(PA_HAS_64_BITS_POINTERS)
 
 template <bool thread_safe>
 void PartitionRoot<thread_safe>::Init(PartitionOptions opts) {
@@ -677,15 +812,28 @@ void PartitionRoot<thread_safe>::Init(PartitionOptions opts) {
     internal::PartitionAddressSpace::Init();
 #endif
 
+#if BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT) && \
+    !defined(PA_HAS_64_BITS_POINTERS)
+    ReserveBackupRefPtrGuardRegionIfNeeded();
+#endif
+
     flags.allow_aligned_alloc =
         opts.aligned_alloc == PartitionOptions::AlignedAlloc::kAllowed;
     flags.allow_cookie = opts.cookie == PartitionOptions::Cookie::kAllowed;
-#if BUILDFLAG(USE_BACKUP_REF_PTR)
+#if BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT)
     flags.brp_enabled_ =
         opts.backup_ref_ptr == PartitionOptions::BackupRefPtr::kEnabled;
-#else
+    flags.brp_zapping_enabled_ =
+        opts.backup_ref_ptr_zapping ==
+        PartitionOptions::BackupRefPtrZapping::kEnabled;
+    PA_CHECK(!flags.brp_zapping_enabled_ || flags.brp_enabled_);
+#if defined(PA_ENABLE_MAC11_MALLOC_SIZE_HACK) && BUILDFLAG(IS_APPLE)
+    flags.mac11_malloc_size_hack_enabled_ =
+        flags.brp_enabled_ && internal::base::mac::IsOS11();
+#endif  // defined(PA_ENABLE_MAC11_MALLOC_SIZE_HACK) && BUILDFLAG(IS_APPLE)
+#else   // BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT)
     PA_CHECK(opts.backup_ref_ptr == PartitionOptions::BackupRefPtr::kDisabled);
-#endif
+#endif  // BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT)
     flags.use_configurable_pool =
         (opts.use_configurable_pool ==
          PartitionOptions::UseConfigurablePool::kIfAvailable) &&
@@ -696,10 +844,19 @@ void PartitionRoot<thread_safe>::Init(PartitionOptions opts) {
     // BRP requires objects to be in a different Pool.
     PA_CHECK(!(flags.use_configurable_pool && brp_enabled()));
 
+#if BUILDFLAG(ENABLE_PKEYS)
+    // BRP and pkey mode use different pools, so they can't be enabled at the
+    // same time.
+    PA_CHECK(opts.pkey == internal::kDefaultPkey ||
+             opts.backup_ref_ptr == PartitionOptions::BackupRefPtr::kDisabled);
+    flags.pkey = opts.pkey;
+#endif
+
     // Ref-count messes up alignment needed for AlignedAlloc, making this
     // option incompatible. However, except in the
     // PUT_REF_COUNT_IN_PREVIOUS_SLOT case.
-#if BUILDFLAG(USE_BACKUP_REF_PTR) && !BUILDFLAG(PUT_REF_COUNT_IN_PREVIOUS_SLOT)
+#if BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT) && \
+    !BUILDFLAG(PUT_REF_COUNT_IN_PREVIOUS_SLOT)
     PA_CHECK(!flags.allow_aligned_alloc || !flags.brp_enabled_);
 #endif
 
@@ -718,6 +875,18 @@ void PartitionRoot<thread_safe>::Init(PartitionOptions opts) {
       flags.extras_size += internal::kPartitionRefCountSizeAdjustment;
       flags.extras_offset += internal::kPartitionRefCountOffsetAdjustment;
     }
+    if (opts.add_dummy_ref_count ==
+        PartitionOptions::AddDummyRefCount::kEnabled) {
+      // AddDummyRefCount will increase the size to simulate adding
+      // PartitionRefCount, but non of the BRP logic will run.
+      PA_CHECK(!brp_enabled());
+      flags.extras_size += internal::kPartitionRefCountSizeAdjustment;
+    }
+#if defined(PA_ENABLE_MTE_CHECKED_PTR_SUPPORT_WITH_64_BITS_POINTERS)
+    // Add one extra byte to each slot's end to allow beyond-the-end
+    // pointers (crbug.com/1364476).
+    flags.extras_size += 1;
+#endif  // defined(PA_ENABLE_MTE_CHECKED_PTR_SUPPORT_WITH_64_BITS_POINTERS)
 #endif  //  defined(PA_EXTRAS_REQUIRED)
 
     // Re-confirm the above PA_CHECKs, by making sure there are no
@@ -726,18 +895,19 @@ void PartitionRoot<thread_safe>::Init(PartitionOptions opts) {
     PA_CHECK(!flags.allow_aligned_alloc || !flags.extras_offset);
 
     flags.quarantine_mode =
-#if defined(PA_ALLOW_PCSCAN)
+#if BUILDFLAG(STARSCAN)
         (opts.quarantine == PartitionOptions::Quarantine::kDisallowed
              ? QuarantineMode::kAlwaysDisabled
              : QuarantineMode::kDisabledByDefault);
 #else
         QuarantineMode::kAlwaysDisabled;
-#endif  // defined(PA_ALLOW_PCSCAN)
+#endif  // BUILDFLAG(STARSCAN)
 
     // We mark the sentinel slot span as free to make sure it is skipped by our
     // logic to find a new active slot span.
     memset(&sentinel_bucket, 0, sizeof(sentinel_bucket));
-    sentinel_bucket.active_slot_spans_head = SlotSpan::get_sentinel_slot_span();
+    sentinel_bucket.active_slot_spans_head =
+        SlotSpan::get_sentinel_slot_span_non_const();
 
     // This is a "magic" value so we can test if a root pointer is valid.
     inverted_self = ~reinterpret_cast<uintptr_t>(this);
@@ -781,17 +951,23 @@ void PartitionRoot<thread_safe>::Init(PartitionOptions opts) {
   }
 
   // Called without the lock, might allocate.
-#if BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+#if BUILDFLAG(ENABLE_PARTITION_ALLOC_AS_MALLOC_SUPPORT)
   PartitionAllocMallocInitOnce();
+#endif
+
+#if BUILDFLAG(ENABLE_PKEYS)
+  if (flags.pkey != internal::kDefaultPkey) {
+    internal::PartitionAllocPkeyInit(flags.pkey);
+  }
 #endif
 }
 
 template <bool thread_safe>
 PartitionRoot<thread_safe>::~PartitionRoot() {
-#if BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+#if BUILDFLAG(ENABLE_PARTITION_ALLOC_AS_MALLOC_SUPPORT)
   PA_CHECK(!flags.with_thread_cache)
       << "Must not destroy a partition with a thread cache";
-#endif  // BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+#endif  // BUILDFLAG(ENABLE_PARTITION_ALLOC_AS_MALLOC_SUPPORT)
 
 #if defined(PA_USE_PARTITION_ROOT_ENUMERATOR)
   if (initialized)
@@ -827,6 +1003,7 @@ bool PartitionRoot<thread_safe>::TryReallocInPlaceForDirectMap(
     internal::SlotSpanMetadata<thread_safe>* slot_span,
     size_t requested_size) {
   PA_DCHECK(slot_span->bucket->is_direct_mapped());
+  // Slot-span metadata isn't MTE-tagged.
   PA_DCHECK(
       internal::IsManagedByDirectMap(reinterpret_cast<uintptr_t>(slot_span)));
 
@@ -864,6 +1041,7 @@ bool PartitionRoot<thread_safe>::TryReallocInPlaceForDirectMap(
 
   // bucket->slot_size is the currently committed size of the allocation.
   size_t current_slot_size = slot_span->bucket->slot_size;
+  size_t current_usable_size = slot_span->GetUsableSize(this);
   uintptr_t slot_start = SlotSpan::ToSlotSpanStart(slot_span);
   // This is the available part of the reservation up to which the new
   // allocation can grow.
@@ -917,11 +1095,20 @@ bool PartitionRoot<thread_safe>::TryReallocInPlaceForDirectMap(
   IncreaseTotalSizeOfAllocatedBytes(reinterpret_cast<uintptr_t>(slot_span),
                                     slot_span->bucket->slot_size, raw_size);
 
+  // Always record in-place realloc() as free()+malloc() pair.
+  //
+  // The early returns above (`return false`) will fall back to free()+malloc(),
+  // so this is consistent.
+  auto* thread_cache = GetOrCreateThreadCache();
+  if (ThreadCache::IsValid(thread_cache)) {
+    thread_cache->RecordDeallocation(current_usable_size);
+    thread_cache->RecordAllocation(slot_span->GetUsableSize(this));
+  }
+
 #if BUILDFLAG(PA_DCHECK_IS_ON)
   // Write a new trailing cookie.
   if (flags.allow_cookie) {
-    auto* object =
-        reinterpret_cast<unsigned char*>(SlotStartToObject(slot_start));
+    auto* object = static_cast<unsigned char*>(SlotStartToObject(slot_start));
     internal::PartitionCookieWriteValue(object +
                                         slot_span->GetUsableSize(this));
   }
@@ -932,25 +1119,26 @@ bool PartitionRoot<thread_safe>::TryReallocInPlaceForDirectMap(
 
 template <bool thread_safe>
 bool PartitionRoot<thread_safe>::TryReallocInPlaceForNormalBuckets(
-    void* ptr,
+    void* object,
     SlotSpan* slot_span,
     size_t new_size) {
-  uintptr_t address = reinterpret_cast<uintptr_t>(ptr);
-  PA_DCHECK(internal::IsManagedByNormalBuckets(address));
+  uintptr_t slot_start = ObjectToSlotStart(object);
+  PA_DCHECK(internal::IsManagedByNormalBuckets(slot_start));
 
   // TODO: note that tcmalloc will "ignore" a downsizing realloc() unless the
   // new size is a significant percentage smaller. We could do the same if we
   // determine it is a win.
   if (AllocationCapacityFromRequestedSize(new_size) !=
-      AllocationCapacityFromPtr(ptr))
+      AllocationCapacityFromSlotStart(slot_start)) {
     return false;
+  }
+  size_t current_usable_size = slot_span->GetUsableSize(this);
 
   // Trying to allocate |new_size| would use the same amount of underlying
   // memory as we're already using, so re-use the allocation after updating
   // statistics (and cookie, if present).
   if (slot_span->CanStoreRawSize()) {
 #if BUILDFLAG(PUT_REF_COUNT_IN_PREVIOUS_SLOT) && BUILDFLAG(PA_DCHECK_IS_ON)
-    uintptr_t slot_start = ObjectToSlotStart(ptr);
     internal::PartitionRefCount* old_ref_count;
     if (brp_enabled()) {
       old_ref_count = internal::PartitionRefCountPointer(slot_start);
@@ -971,13 +1159,22 @@ bool PartitionRoot<thread_safe>::TryReallocInPlaceForNormalBuckets(
     // Write a new trailing cookie only when it is possible to keep track
     // raw size (otherwise we wouldn't know where to look for it later).
     if (flags.allow_cookie) {
-      internal::PartitionCookieWriteValue(
-          reinterpret_cast<unsigned char*>(address) +
-          slot_span->GetUsableSize(this));
+      internal::PartitionCookieWriteValue(static_cast<unsigned char*>(object) +
+                                          slot_span->GetUsableSize(this));
     }
 #endif  // BUILDFLAG(PA_DCHECK_IS_ON)
   }
-  return ptr;
+
+  // Always record a realloc() as a free() + malloc(), even if it's in
+  // place. When we cannot do it in place (`return false` above), the allocator
+  // falls back to free()+malloc(), so this is consistent.
+  ThreadCache* thread_cache = GetOrCreateThreadCache();
+  if (PA_LIKELY(ThreadCache::IsValid(thread_cache))) {
+    thread_cache->RecordDeallocation(current_usable_size);
+    thread_cache->RecordAllocation(slot_span->GetUsableSize(this));
+  }
+
+  return object;
 }
 
 template <bool thread_safe>
@@ -1074,12 +1271,14 @@ template <bool thread_safe>
 void PartitionRoot<thread_safe>::PurgeMemory(int flags) {
   {
     ::partition_alloc::internal::ScopedGuard guard{lock_};
+#if BUILDFLAG(STARSCAN)
     // Avoid purging if there is PCScan task currently scheduled. Since pcscan
     // takes snapshot of all allocated pages, decommitting pages here (even
     // under the lock) is racy.
     // TODO(bikineev): Consider rescheduling the purging after PCScan.
     if (PCScan::IsInProgress())
       return;
+#endif  // BUILDFLAG(STARSCAN)
 
     if (flags & PurgeFlags::kDecommitEmptySlotSpans)
       DecommitEmptySlotSpans();
@@ -1088,7 +1287,7 @@ void PartitionRoot<thread_safe>::PurgeMemory(int flags) {
         if (bucket.slot_size == internal::kInvalidBucketSize)
           continue;
 
-        if (bucket.slot_size >= internal::SystemPageSize())
+        if (bucket.slot_size >= internal::MinPurgeableSlotSize())
           internal::PartitionPurgeBucket(&bucket);
         else
           bucket.SortSlotSpanFreelists();
@@ -1170,11 +1369,17 @@ void PartitionRoot<thread_safe>::DumpStats(const char* partition_name,
         max_size_of_committed_pages.load(std::memory_order_relaxed);
     stats.total_allocated_bytes = total_size_of_allocated_bytes;
     stats.max_allocated_bytes = max_size_of_allocated_bytes;
-#if BUILDFLAG(USE_BACKUP_REF_PTR)
+#if BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT)
     stats.total_brp_quarantined_bytes =
         total_size_of_brp_quarantined_bytes.load(std::memory_order_relaxed);
     stats.total_brp_quarantined_count =
         total_count_of_brp_quarantined_slots.load(std::memory_order_relaxed);
+    stats.cumulative_brp_quarantined_bytes =
+        cumulative_size_of_brp_quarantined_bytes.load(
+            std::memory_order_relaxed);
+    stats.cumulative_brp_quarantined_count =
+        cumulative_count_of_brp_quarantined_slots.load(
+            std::memory_order_relaxed);
 #endif
 
     size_t direct_mapped_allocations_total_size = 0;
@@ -1268,9 +1473,7 @@ void PartitionRoot<thread_safe>::ResetBookkeepingForTesting() {
 }
 
 template <>
-uintptr_t PartitionRoot<internal::ThreadSafe>::MaybeInitThreadCacheAndAlloc(
-    uint16_t bucket_index,
-    size_t* slot_size) {
+ThreadCache* PartitionRoot<internal::ThreadSafe>::MaybeInitThreadCache() {
   auto* tcache = ThreadCache::Get();
   // See comment in `EnableThreadCacheIfSupport()` for why this is an acquire
   // load.
@@ -1283,7 +1486,7 @@ uintptr_t PartitionRoot<internal::ThreadSafe>::MaybeInitThreadCacheAndAlloc(
     //    be us, in which case we are re-entering and should not create a thread
     //    cache. If it is not us, then this merely delays thread cache
     //    construction a bit, which is not an issue.
-    return 0;
+    return nullptr;
   }
 
   // There is no per-thread ThreadCache allocated here yet, and this partition
@@ -1306,10 +1509,7 @@ uintptr_t PartitionRoot<internal::ThreadSafe>::MaybeInitThreadCacheAndAlloc(
   tcache = ThreadCache::Create(this);
   thread_caches_being_constructed_.fetch_sub(1, std::memory_order_relaxed);
 
-  // Cache is created empty, but at least this will trigger batch fill, which
-  // may be useful, and we are already in a slow path anyway (first small
-  // allocation of this thread).
-  return tcache->GetFromCache(bucket_index, slot_size);
+  return tcache;
 }
 
 template <>

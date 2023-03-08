@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,13 +9,13 @@
 #include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ref.h"
 #include "base/message_loop/message_pump_for_io.h"
 #include "base/no_destructor.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/task/current_thread.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
-#include "base/threading/sequenced_task_runner_handle.h"
 #include "base/threading/thread_checker.h"
 #include "base/threading/thread_local.h"
 #include "base/threading/thread_restrictions.h"
@@ -62,7 +62,7 @@ class FileDescriptorWatcher::Controller::Watcher
   // Runs tasks on the sequence on which this was instantiated (i.e. the
   // sequence on which the callback must run).
   const scoped_refptr<SequencedTaskRunner> callback_task_runner_ =
-      SequencedTaskRunnerHandle::Get();
+      SequencedTaskRunner::GetCurrentDefault();
 
   // The Controller that created this Watcher. This WeakPtr is bound to the
   // |controller_| thread and can only be used by this Watcher to post back to
@@ -71,7 +71,7 @@ class FileDescriptorWatcher::Controller::Watcher
 
   // WaitableEvent to signal to ensure that the Watcher is always destroyed
   // before the Controller.
-  base::WaitableEvent& on_destroyed_;
+  const raw_ref<base::WaitableEvent, DanglingUntriaged> on_destroyed_;
 
   // Whether this Watcher is notified when |fd_| becomes readable or writable
   // without blocking.
@@ -109,7 +109,7 @@ FileDescriptorWatcher::Controller::Watcher::~Watcher() {
 
   // Stop watching the descriptor before signalling |on_destroyed_|.
   CHECK(fd_watch_controller_.StopWatchingFileDescriptor());
-  on_destroyed_.Signal();
+  on_destroyed_->Signal();
 }
 
 void FileDescriptorWatcher::Controller::Watcher::StartWatching() {
@@ -182,7 +182,7 @@ FileDescriptorWatcher::Controller::Controller(MessagePumpForIO::Mode mode,
 }
 
 FileDescriptorWatcher::Controller::~Controller() {
-  DCHECK(sequence_checker_.CalledOnValidSequence());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (io_thread_task_runner_->BelongsToCurrentThread()) {
     // If the MessagePumpForIO and the Controller live on the same thread.
@@ -222,7 +222,7 @@ FileDescriptorWatcher::Controller::~Controller() {
 }
 
 void FileDescriptorWatcher::Controller::StartWatching() {
-  DCHECK(sequence_checker_.CalledOnValidSequence());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (io_thread_task_runner_->BelongsToCurrentThread()) {
     // If the MessagePumpForIO and the Controller live on the same thread.
     watcher_->StartWatching();
@@ -237,7 +237,7 @@ void FileDescriptorWatcher::Controller::StartWatching() {
 }
 
 void FileDescriptorWatcher::Controller::RunCallback() {
-  DCHECK(sequence_checker_.CalledOnValidSequence());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   WeakPtr<Controller> weak_this = weak_factory_.GetWeakPtr();
 

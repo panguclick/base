@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -205,12 +205,10 @@ class BASE_EXPORT PlatformSharedMemoryRegion {
   Mode GetMode() const { return mode_; }
 
  private:
- //delete by kingkong
-  // FRIEND_TEST_ALL_PREFIXES(PlatformSharedMemoryRegionTest,
-  //                          CreateReadOnlyRegionDeathTest);
-  // FRIEND_TEST_ALL_PREFIXES(PlatformSharedMemoryRegionTest,
-  //                          CheckPlatformHandlePermissionsCorrespondToMode);
-  //end
+  FRIEND_TEST_ALL_PREFIXES(PlatformSharedMemoryRegionTest,
+                           CreateReadOnlyRegionDeathTest);
+  FRIEND_TEST_ALL_PREFIXES(PlatformSharedMemoryRegionTest,
+                           CheckPlatformHandlePermissionsCorrespondToMode);
   static PlatformSharedMemoryRegion Create(Mode mode,
                                            size_t size
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)

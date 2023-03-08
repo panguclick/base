@@ -1,4 +1,4 @@
-// Copyright (c) 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -33,8 +33,7 @@ void PCScanSchedulingBackend::EnableScheduling() {
   scheduling_enabled_.store(true, std::memory_order_relaxed);
   // Check if *Scan needs to be run immediately.
   if (NeedsToImmediatelyScan())
-    ::base::internal::PCScan::PerformScan(
-        ::base::internal::PCScan::InvocationMode::kNonBlocking);
+    PCScan::PerformScan(PCScan::InvocationMode::kNonBlocking);
 }
 
 size_t PCScanSchedulingBackend::ScanStarted() {

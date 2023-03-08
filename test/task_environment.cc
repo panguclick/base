@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,6 +16,7 @@
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ref.h"
 #include "base/message_loop/message_pump.h"
 #include "base/message_loop/message_pump_type.h"
 #include "base/no_destructor.h"
@@ -23,9 +24,11 @@
 #include "base/run_loop.h"
 #include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
+#include "base/task/common/lazy_now.h"
 #include "base/task/sequence_manager/sequence_manager_impl.h"
 #include "base/task/sequence_manager/time_domain.h"
 #include "base/task/simple_task_executor.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool/thread_pool_impl.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
 #include "base/test/bind.h"
@@ -37,7 +40,6 @@
 #include "base/threading/thread_checker_impl.h"
 #include "base/threading/thread_local.h"
 #include "base/threading/thread_restrictions.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/clock.h"
 #include "base/time/tick_clock.h"
 #include "base/time/time.h"
@@ -98,15 +100,15 @@ class TickClockBasedClock : public Clock {
  public:
   explicit TickClockBasedClock(const TickClock* tick_clock)
       : tick_clock_(*tick_clock),
-        start_ticks_(tick_clock_.NowTicks()),
+        start_ticks_(tick_clock_->NowTicks()),
         start_time_(Time::UnixEpoch()) {}
 
   Time Now() const override {
-    return start_time_ + (tick_clock_.NowTicks() - start_ticks_);
+    return start_time_ + (tick_clock_->NowTicks() - start_ticks_);
   }
 
  private:
-  const TickClock& tick_clock_;
+  const raw_ref<const TickClock> tick_clock_;
   const TimeTicks start_ticks_;
   const Time start_time_;
 };
@@ -354,7 +356,8 @@ class TaskEnvironment::MockTimeDomain : public sequence_manager::TimeDomain {
   // Only ever written to from the main sequence. Start from real Now() instead
   // of zero to give a more realistic view to tests.
   TimeTicks now_ticks_ GUARDED_BY(now_ticks_lock_){
-      base::subtle::TimeTicksNowIgnoringOverride()};
+      base::subtle::TimeTicksNowIgnoringOverride()
+          .SnappedToNextTick(TimeTicks(), Milliseconds(1))};
 };
 
 TaskEnvironment::MockTimeDomain*
@@ -404,18 +407,19 @@ TaskEnvironment::TaskEnvironment(
                     BindRepeating(&sequence_manager::SequenceManager::
                                       DescribeAllPendingTasks,
                                   Unretained(sequence_manager_.get())))) {
-  CHECK(!base::ThreadTaskRunnerHandle::IsSet());
+  CHECK(!base::SingleThreadTaskRunner::HasCurrentDefault());
   // If |subclass_creates_default_taskrunner| is true then initialization is
   // deferred until DeferredInitFromSubclass().
   if (!subclass_creates_default_taskrunner) {
-    task_queue_ = sequence_manager_->CreateTaskQueue(
-        sequence_manager::TaskQueue::Spec("task_environment_default"));
+    task_queue_ =
+        sequence_manager_->CreateTaskQueue(sequence_manager::TaskQueue::Spec(
+            sequence_manager::QueueName::TASK_ENVIRONMENT_DEFAULT_TQ));
     task_runner_ = task_queue_->task_runner();
     sequence_manager_->SetDefaultTaskRunner(task_runner_);
     if (mock_time_domain_)
       sequence_manager_->SetTimeDomain(mock_time_domain_.get());
     simple_task_executor_ = std::make_unique<SimpleTaskExecutor>(task_runner_);
-    CHECK(base::ThreadTaskRunnerHandle::IsSet())
+    CHECK(base::SingleThreadTaskRunner::HasCurrentDefault())
         << "ThreadTaskRunnerHandle should've been set now.";
     CompleteInitialization();
   }
@@ -727,7 +731,7 @@ TimeDelta TaskEnvironment::NextMainThreadPendingTaskDelay() const {
   // ReclaimMemory sweeps canceled delayed tasks.
   sequence_manager_->ReclaimMemory();
   DCHECK(mock_time_domain_);
-  sequence_manager::LazyNow lazy_now(mock_time_domain_->NowTicks());
+  LazyNow lazy_now(mock_time_domain_->NowTicks());
   if (!sequence_manager_->IsIdleForTesting())
     return TimeDelta();
   absl::optional<sequence_manager::WakeUp> wake_up =

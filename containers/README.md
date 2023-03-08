@@ -29,11 +29,16 @@ Google naming. Be sure to use the base namespace.
 
 ### Usage advice
 
-*   Generally avoid `std::unordered_set` and `std::unordered_map`. In the common
-    case, query performance is unlikely to be sufficiently higher than
-    `std::map` to make a difference, insert performance is slightly worse, and
-    the memory overhead is high. This makes sense mostly for large tables where
-    you expect a lot of lookups.
+*   Do not use `base::flat_map` or `base::flat_set` if the number of items will
+    be large or unbounded and elements will be inserted/deleted outside of the
+    containers constructor/destructor - they have O(n) performance on inserts
+    and deletes of individual items.
+
+*   Do not default to using `std::unordered_set` and `std::unordered_map`. In
+    the common case, query performance is unlikely to be sufficiently higher
+    than `std::map` to make a difference, insert performance is slightly worse,
+    and the memory overhead is high. This makes sense mostly for large tables
+    where you expect a lot of lookups.
 
 *   Most maps and sets in Chrome are small and contain objects that can be moved
     efficiently. In this case, consider `base::flat_map` and `base::flat_set`.
@@ -65,12 +70,12 @@ Google naming. Be sure to use the base namespace.
 Sizes are on 64-bit platforms. Stable iterators aren't invalidated when the
 container is mutated.
 
-| Container                                  | Empty size            | Per-item overhead | Stable iterators? |
-|:------------------------------------------ |:--------------------- |:----------------- |:----------------- |
-| `std::map`, `std::set`                     | 16 bytes              | 32 bytes          | Yes               |
-| `std::unordered_map`, `std::unordered_set` | 128 bytes             | 16 - 24 bytes     | No                |
-| `base::flat_map`, `base::flat_set`         | 24 bytes              | 0 (see notes)     | No                |
-| `base::small_map`                          | 24 bytes (see notes)  | 32 bytes          | No                |
+| Container                                  | Empty size            | Per-item overhead | Stable iterators? | Insert/delete complexity     |
+|:------------------------------------------ |:--------------------- |:----------------- |:----------------- |:-----------------------------|
+| `std::map`, `std::set`                     | 16 bytes              | 32 bytes          | Yes               | O(log n)                     |
+| `std::unordered_map`, `std::unordered_set` | 128 bytes             | 16 - 24 bytes     | No                | O(1)                         |
+| `base::flat_map`, `base::flat_set`         | 24 bytes              | 0 (see notes)     | No                | O(n)                         |
+| `base::small_map`                          | 24 bytes (see notes)  | 32 bytes          | No                | depends on fallback map type |
 
 **Takeaways:** `std::unordered_map` and `std::unordered_set` have high
 overhead for small container sizes, so prefer these only for larger workloads.
@@ -238,7 +243,7 @@ The `base::circular_deque` implementation (and the `base::queue` which uses it)
 provide performance consistent across platforms that better matches most
 programmer's expectations on performance (it doesn't waste as much space as
 libc++ and doesn't do as many heap allocations as MSVC). It also generates less
-code tham `std::queue`: using it across the code base saves several hundred
+code than `std::queue`: using it across the code base saves several hundred
 kilobytes.
 
 Since `base::deque` does not have stable iterators and it will move the objects

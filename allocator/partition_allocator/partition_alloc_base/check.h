@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,9 @@
 
 #include <iosfwd>
 
-#include "base/allocator/buildflags.h"
 #include "base/allocator/partition_allocator/partition_alloc_base/compiler_specific.h"
 #include "base/allocator/partition_allocator/partition_alloc_base/component_export.h"
+#include "base/allocator/partition_allocator/partition_alloc_base/debug/debugging_buildflags.h"
 #include "base/allocator/partition_allocator/partition_alloc_base/immediate_crash.h"
 
 // This header defines the CHECK, DCHECK, and DPCHECK macros.
@@ -98,7 +98,11 @@ class PA_COMPONENT_EXPORT(PARTITION_ALLOC) CheckError {
   LogMessage* log_message_;
 };
 
-#if defined(OFFICIAL_BUILD) && defined(NDEBUG)
+#if defined(OFFICIAL_BUILD) && !defined(NDEBUG)
+#error "Debug builds are not expected to be optimized as official builds."
+#endif  // defined(OFFICIAL_BUILD) && !defined(NDEBUG)
+
+#if defined(OFFICIAL_BUILD) && !BUILDFLAG(PA_DCHECK_IS_ON)
 
 // Discard log strings to reduce code bloat.
 //

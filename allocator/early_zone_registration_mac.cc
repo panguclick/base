@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -31,6 +31,7 @@ void abort_report_np(const char* fmt, ...);
 }
 
 namespace {
+
 malloc_zone_t* GetDefaultMallocZone() {
   // malloc_default_zone() does not return... the default zone, but the
   // initial one. The default one is the first element of the default zone
@@ -148,6 +149,11 @@ void EarlyMallocZoneRegistration() {
     return g_default_zone->batch_free(g_default_zone, to_be_freed,
                                       num_to_be_freed);
   };
+#if PA_TRY_FREE_DEFAULT_IS_AVAILABLE
+  g_delegating_zone.try_free_default = [](malloc_zone_t* zone, void* ptr) {
+    return g_default_zone->try_free_default(g_default_zone, ptr);
+  };
+#endif
 
   // Diagnostics and debugging.
   //

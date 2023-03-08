@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -23,9 +23,9 @@ void rust_gtest_add_test(GtestFactoryFunction gtest_factory,
                         line, factory);
 }
 
-void rust_gtest_add_failure_at(const unsigned char* file,
+void rust_gtest_add_failure_at(const char* file,
                                int32_t line,
-                               rust::Str message) {
+                               const char* message) {
   ADD_FAILURE_AT(reinterpret_cast<const char*>(file), line) << message;
 }
 

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,9 +12,9 @@
 #include <sstream>
 #include <string>
 
-#include "base/allocator/buildflags.h"
 #include "base/allocator/partition_allocator/partition_alloc_base/compiler_specific.h"
 #include "base/allocator/partition_allocator/partition_alloc_base/component_export.h"
+#include "base/allocator/partition_allocator/partition_alloc_base/debug/debugging_buildflags.h"
 #include "base/allocator/partition_allocator/partition_alloc_base/migration_adapter.h"
 #include "base/allocator/partition_allocator/partition_alloc_base/scoped_clear_last_error.h"
 #include "build/build_config.h"
@@ -401,11 +401,11 @@ PA_COMPONENT_EXPORT(PARTITION_ALLOC) extern std::ostream* g_swallow_stream;
 
 // Definitions for DCHECK et al.
 
-#if defined(DCHECK_IS_CONFIGURABLE)
+#if BUILDFLAG(PA_DCHECK_IS_CONFIGURABLE)
 PA_COMPONENT_EXPORT(PARTITION_ALLOC) extern LogSeverity LOGGING_DCHECK;
 #else
 constexpr LogSeverity LOGGING_DCHECK = LOGGING_FATAL;
-#endif  // defined(DCHECK_IS_CONFIGURABLE)
+#endif  // BUILDFLAG(PA_DCHECK_IS_CONFIGURABLE)
 
 // Redefine the standard assert to use our nice log files
 #undef assert

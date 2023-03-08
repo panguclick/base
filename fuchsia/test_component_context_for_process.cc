@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -30,8 +30,11 @@ TestComponentContextForProcess::TestComponentContextForProcess(
 
   // Push all services from /svc to the test context if requested.
   if (initial_state == InitialState::kCloneAll) {
-    base::FileEnumerator file_enum(base::FilePath("/svc"), false,
-                                   base::FileEnumerator::FILES);
+    // Calling stat() in /svc is problematic; see https://fxbug.dev/100207. Tell
+    // the enumerator not to recurse, to return both files and directories, and
+    // to report only the names of entries.
+    base::FileEnumerator file_enum(base::FilePath("/svc"), /*recursive=*/false,
+                                   base::FileEnumerator::NAMES_ONLY);
     for (auto file = file_enum.Next(); !file.empty(); file = file_enum.Next()) {
       AddService(file.BaseName().value());
     }
@@ -51,8 +54,7 @@ TestComponentContextForProcess::TestComponentContextForProcess(
   fidl::InterfaceHandle<::fuchsia::io::Directory> published_root_directory;
   old_context_ = ReplaceComponentContextForProcessForTest(
       std::make_unique<sys::ComponentContext>(
-          std::move(incoming_services),
-          published_root_directory.NewRequest().TakeChannel()));
+          std::move(incoming_services), published_root_directory.NewRequest()));
 
   // Connect to the "/svc" directory of the |published_root_directory| and wrap
   // that into a ServiceDirectory.
@@ -62,7 +64,7 @@ TestComponentContextForProcess::TestComponentContextForProcess(
       published_services.NewRequest().TakeChannel().release());
   ZX_CHECK(status == ZX_OK, status) << "fdio_service_connect_at() to /svc";
   published_services_ =
-      std::make_unique<sys::ServiceDirectory>(std::move(published_services));
+      std::make_shared<sys::ServiceDirectory>(std::move(published_services));
 }
 
 TestComponentContextForProcess::~TestComponentContextForProcess() {

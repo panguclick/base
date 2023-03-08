@@ -1,10 +1,13 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "base/strings/string_piece_rust.h"
+#include "build/rust/rust_buildflags.h"
 
 #include "testing/gtest/include/gtest/gtest.h"
+
+#if BUILDFLAG(TOOLCHAIN_HAS_RUST)
 
 namespace base {
 namespace {
@@ -28,3 +31,5 @@ TEST(BaseStringPieceRustTest, StrToSlice) {
 
 }  // namespace
 }  // namespace base
+
+#endif  // BUILDFLAG(TOOLCHAIN_HAS_RUST)

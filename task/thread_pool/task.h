@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@
 
 #include "base/base_export.h"
 #include "base/callback.h"
+#include "base/containers/intrusive_heap.h"
 #include "base/location.h"
 #include "base/pending_task.h"
 #include "base/task/sequenced_task_runner.h"
@@ -48,6 +49,15 @@ struct BASE_EXPORT Task : public PendingTask {
   ~Task() = default;
 
   Task& operator=(Task&& other);
+
+  // Required by IntrusiveHeap.
+  void SetHeapHandle(const HeapHandle& handle) {}
+
+  // Required by IntrusiveHeap.
+  void ClearHeapHandle() {}
+
+  // Required by IntrusiveHeap.
+  HeapHandle GetHeapHandle() const { return HeapHandle::Invalid(); }
 };
 
 }  // namespace internal

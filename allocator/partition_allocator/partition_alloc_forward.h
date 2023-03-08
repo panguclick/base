@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,9 +8,10 @@
 #include <algorithm>
 #include <cstddef>
 
-#include "base/allocator/buildflags.h"
 #include "base/allocator/partition_allocator/partition_alloc_base/compiler_specific.h"
 #include "base/allocator/partition_allocator/partition_alloc_base/component_export.h"
+#include "base/allocator/partition_allocator/partition_alloc_base/debug/debugging_buildflags.h"
+#include "base/allocator/partition_allocator/partition_alloc_buildflags.h"
 
 namespace partition_alloc {
 
@@ -24,16 +25,9 @@ namespace internal {
 // the second one 16. We could technically return something different for
 // malloc() and operator new(), but this would complicate things, and most of
 // our allocations are presumably coming from operator new() anyway.
-//
-// __STDCPP_DEFAULT_NEW_ALIGNMENT__ is C++17. As such, it is not defined on all
-// platforms, as Chrome's requirement is C++14 as of 2020.
-#if defined(__STDCPP_DEFAULT_NEW_ALIGNMENT__)
 constexpr size_t kAlignment =
     std::max(alignof(max_align_t),
              static_cast<size_t>(__STDCPP_DEFAULT_NEW_ALIGNMENT__));
-#else
-constexpr size_t kAlignment = alignof(max_align_t);
-#endif
 static_assert(kAlignment <= 16,
               "PartitionAlloc doesn't support a fundamental alignment larger "
               "than 16 bytes.");
@@ -45,7 +39,7 @@ struct SlotSpanMetadata;
 
 #if (BUILDFLAG(PA_DCHECK_IS_ON) ||                    \
      BUILDFLAG(ENABLE_BACKUP_REF_PTR_SLOW_CHECKS)) && \
-    BUILDFLAG(USE_BACKUP_REF_PTR)
+    BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT)
 PA_COMPONENT_EXPORT(PARTITION_ALLOC)
 void CheckThatSlotOffsetIsZero(uintptr_t address);
 #endif
@@ -60,14 +54,6 @@ struct PartitionRoot;
 using ThreadSafePartitionRoot = PartitionRoot<internal::ThreadSafe>;
 
 }  // namespace partition_alloc
-
-namespace base {
-
-// TODO(https://crbug.com/1288247): Remove these 'using' declarations once
-// the migration to the new namespaces gets done.
-using ::partition_alloc::PartitionRoot;
-
-}  // namespace base
 
 // From https://clang.llvm.org/docs/AttributeReference.html#malloc:
 //

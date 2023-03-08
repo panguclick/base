@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,6 +14,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/synchronization/atomic_flag.h"
 #include "base/task/common/checked_lock.h"
+#include "base/task/delay_policy.h"
 #include "base/task/thread_pool/task.h"
 #include "base/thread_annotations.h"
 #include "base/time/default_tick_clock.h"
@@ -60,6 +61,14 @@ class BASE_EXPORT DelayedTaskManager {
   // Returns the |delayed_run_time| of the next scheduled task, if any.
   absl::optional<TimeTicks> NextScheduledRunTime() const;
 
+  // Returns the DelayPolicy for the next delayed task.
+  subtle::DelayPolicy TopTaskDelayPolicyForTesting() const;
+
+  // Must be invoked before deleting the delayed task manager. The caller must
+  // flush tasks posted to the service thread by this before deleting the
+  // delayed task manager.
+  void Shutdown();
+
  private:
   struct DelayedTask {
     DelayedTask();
@@ -81,9 +90,6 @@ class BASE_EXPORT DelayedTaskManager {
     PostTaskNowCallback callback;
     scoped_refptr<TaskRunner> task_runner;
 
-    // True iff the delayed task has been marked as scheduled.
-    bool IsScheduled() const;
-
     // Mark the delayed task as scheduled. Since the sort key is
     // |task.delayed_run_time|, it does not alter sort order when it is called.
     void SetScheduled();
@@ -96,24 +102,21 @@ class BASE_EXPORT DelayedTaskManager {
 
     // Required by IntrusiveHeap.
     HeapHandle GetHeapHandle() const { return HeapHandle::Invalid(); }
-
-   private:
-    bool scheduled_ = false;
   };
 
   // Get the time at which to schedule the next |ProcessRipeTasks()| execution,
   // or TimeTicks::Max() if none needs to be scheduled (i.e. no task, or next
   // task already scheduled).
-  TimeTicks GetTimeToScheduleProcessRipeTasksLockRequired()
+  std::pair<TimeTicks, subtle::DelayPolicy>
+  GetTimeAndDelayPolicyToScheduleProcessRipeTasksLockRequired()
       EXCLUSIVE_LOCKS_REQUIRED(queue_lock_);
 
-  // Schedule |ProcessRipeTasks()| on the service thread to be executed at the
-  // given |process_ripe_tasks_time|, provided the given time is not
-  // TimeTicks::Max().
-  void ScheduleProcessRipeTasksOnServiceThread(
-      TimeTicks process_ripe_tasks_time);
+  // Schedule |ProcessRipeTasks()| on the service thread to be executed when
+  // the next task is ripe.
+  void ScheduleProcessRipeTasksOnServiceThread();
 
   const RepeatingClosure process_ripe_tasks_closure_;
+  const RepeatingClosure schedule_process_ripe_tasks_closure_;
 
   const raw_ptr<const TickClock> tick_clock_;
 
@@ -122,15 +125,18 @@ class BASE_EXPORT DelayedTaskManager {
   // it is never modified. It is therefore safe to access
   // |service_thread_task_runner_| without synchronization once it is observed
   // that it is non-null.
-  mutable CheckedLock queue_lock_;
+  mutable CheckedLock queue_lock_{UniversalSuccessor()};
 
   scoped_refptr<SequencedTaskRunner> service_thread_task_runner_;
+
+  DelayedTaskHandle delayed_task_handle_ GUARDED_BY_CONTEXT(sequence_checker_);
 
   IntrusiveHeap<DelayedTask, std::greater<>> delayed_task_queue_
       GUARDED_BY(queue_lock_);
 
   bool align_wake_ups_ GUARDED_BY(queue_lock_) = false;
-  TimeDelta task_leeway_ GUARDED_BY(queue_lock_){PendingTask::kDefaultLeeway};
+
+  SEQUENCE_CHECKER(sequence_checker_);
 };
 
 }  // namespace internal

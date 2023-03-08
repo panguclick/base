@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,13 +15,13 @@
 #include "base/time/time.h"
 
 namespace content {
-// FORWARD_DECLARE_TEST(ContentBrowserTest, RunTimeoutInstalled);
+FORWARD_DECLARE_TEST(ContentBrowserTest, RunTimeoutInstalled);
 }
 
 namespace base {
 namespace test {
 
-// FORWARD_DECLARE_TEST(TaskEnvironmentTest, SetsDefaultRunTimeout);
+FORWARD_DECLARE_TEST(TaskEnvironmentTest, SetsDefaultRunTimeout);
 
 // Configures all RunLoop::Run() calls on the current thread to run the
 // supplied |on_timeout| callback if they run for longer than |timeout|.
@@ -79,10 +79,10 @@ class ScopedRunLoopTimeout {
   static void SetAddGTestFailureOnTimeout();
 
  protected:
-  // FRIEND_TEST_ALL_PREFIXES(ScopedRunLoopRunTimeoutTest, TimesOut);
-  // FRIEND_TEST_ALL_PREFIXES(ScopedRunLoopRunTimeoutTest, RunTasksUntilTimeout);
-  // FRIEND_TEST_ALL_PREFIXES(TaskEnvironmentTest, SetsDefaultRunTimeout);
-  // FRIEND_TEST_ALL_PREFIXES(content::ContentBrowserTest, RunTimeoutInstalled);
+  FRIEND_TEST_ALL_PREFIXES(ScopedRunLoopRunTimeoutTest, TimesOut);
+  FRIEND_TEST_ALL_PREFIXES(ScopedRunLoopRunTimeoutTest, RunTasksUntilTimeout);
+  FRIEND_TEST_ALL_PREFIXES(TaskEnvironmentTest, SetsDefaultRunTimeout);
+  FRIEND_TEST_ALL_PREFIXES(content::ContentBrowserTest, RunTimeoutInstalled);
 
   // Exposes the RunLoopTimeout to the friend tests (see above).
   static const RunLoop::RunLoopTimeout* GetTimeoutForCurrentThread();

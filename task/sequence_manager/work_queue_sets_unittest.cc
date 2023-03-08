@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -78,7 +78,7 @@ class WorkQueueSetsTest : public testing::Test {
                               task_order.delayed_run_time(),
                               subtle::DelayPolicy::kFlexibleNoSooner),
                    EnqueueOrder::FromIntForTesting(task_order.sequence_num()),
-                   task_order.enqueue_order());
+                   task_order.enqueue_order(), TimeTicks() + Milliseconds(1));
     return fake_task;
   }
 

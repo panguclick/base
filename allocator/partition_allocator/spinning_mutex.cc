@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -139,6 +139,12 @@ void SpinningMutex::LockSlow() {
 
 void SpinningMutex::LockSlow() {
   ::AcquireSRWLockExclusive(reinterpret_cast<PSRWLOCK>(&lock_));
+}
+
+#elif BUILDFLAG(IS_APPLE)
+
+void SpinningMutex::LockSlow() {
+  return os_unfair_lock_lock(&unfair_lock_);
 }
 
 #elif BUILDFLAG(IS_POSIX)

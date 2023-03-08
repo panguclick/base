@@ -1,4 +1,4 @@
-// Copyright (c) 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -44,15 +44,5 @@ class PA_COMPONENT_EXPORT(PARTITION_ALLOC) Stack final {
 };
 
 }  // namespace partition_alloc::internal
-
-// TODO(crbug.com/1288247): Remove these when migration is complete.
-namespace base::internal {
-
-using ::partition_alloc::internal::GetStackPointer;
-using ::partition_alloc::internal::GetStackTop;
-using ::partition_alloc::internal::Stack;
-using ::partition_alloc::internal::StackVisitor;
-
-}  // namespace base::internal
 
 #endif  // BASE_ALLOCATOR_PARTITION_ALLOCATOR_STARSCAN_STACK_STACK_H_

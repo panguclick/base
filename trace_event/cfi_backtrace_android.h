@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -95,9 +95,9 @@ class BASE_EXPORT CFIBacktraceAndroid {
   bool FindCFIRowForPC(uintptr_t func_addr, CFIRow* out);
 
  private:
-  // FRIEND_TEST_ALL_PREFIXES(CFIBacktraceAndroidTest, TestCFICache);
-  // FRIEND_TEST_ALL_PREFIXES(CFIBacktraceAndroidTest, TestFindCFIRow);
-  // FRIEND_TEST_ALL_PREFIXES(CFIBacktraceAndroidTest, TestUnwinding);
+  FRIEND_TEST_ALL_PREFIXES(CFIBacktraceAndroidTest, TestCFICache);
+  FRIEND_TEST_ALL_PREFIXES(CFIBacktraceAndroidTest, TestFindCFIRow);
+  FRIEND_TEST_ALL_PREFIXES(CFIBacktraceAndroidTest, TestUnwinding);
 
   // A simple cache that stores entries in table using prime modulo hashing.
   // This cache with 500 entries already gives us 95% hit rate, and fits in a
@@ -114,7 +114,7 @@ class BASE_EXPORT CFIBacktraceAndroid {
     bool Find(uintptr_t address, CFIRow* cfi);
 
    private:
-    // FRIEND_TEST_ALL_PREFIXES(CFIBacktraceAndroidTest, TestCFICache);
+    FRIEND_TEST_ALL_PREFIXES(CFIBacktraceAndroidTest, TestCFICache);
 
     // Size is the highest prime which fits the cache in a single system page,
     // usually 4KiB. A prime is chosen to make sure addresses are hashed evenly.

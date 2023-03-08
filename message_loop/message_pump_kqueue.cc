@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,10 @@
 
 #include <sys/errno.h>
 
+#include <atomic>
+
 #include "base/auto_reset.h"
+#include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/mac/mac_util.h"
 #include "base/mac/mach_logging.h"
@@ -17,6 +20,16 @@
 namespace base {
 
 namespace {
+
+// Under this feature a simplified version of the Run() function is used. It
+// improves legibility and avoids some calls to kevent64(). Remove once
+// crbug.com/1200141 is resolved.
+BASE_FEATURE(kUseSimplifiedMessagePumpKqueueLoop,
+             "UseSimplifiedMessagePumpKqueueLoop",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+// Caches the state of the "UseSimplifiedMessagePumpKqueueLoop".
+std::atomic_bool g_use_simplified_version = false;
 
 #if DCHECK_IS_ON()
 // Prior to macOS 10.14, kqueue timers may spuriously wake up, because earlier
@@ -136,30 +149,63 @@ MessagePumpKqueue::MessagePumpKqueue()
 
 MessagePumpKqueue::~MessagePumpKqueue() {}
 
+void MessagePumpKqueue::InitializeFeatures() {
+  g_use_simplified_version.store(
+      base::FeatureList::IsEnabled(kUseSimplifiedMessagePumpKqueueLoop),
+      std::memory_order_relaxed);
+}
+
 void MessagePumpKqueue::Run(Delegate* delegate) {
   AutoReset<bool> reset_keep_running(&keep_running_, true);
+
+  if (g_use_simplified_version.load(std::memory_order_relaxed)) {
+    RunSimplified(delegate);
+  } else {
+    while (keep_running_) {
+      mac::ScopedNSAutoreleasePool pool;
+
+      bool do_more_work = DoInternalWork(delegate, nullptr);
+      if (!keep_running_)
+        break;
+
+      Delegate::NextWorkInfo next_work_info = delegate->DoWork();
+      do_more_work |= next_work_info.is_immediate();
+      if (!keep_running_)
+        break;
+
+      if (do_more_work)
+        continue;
+
+      do_more_work |= delegate->DoIdleWork();
+      if (!keep_running_)
+        break;
+
+      if (do_more_work)
+        continue;
+
+      DoInternalWork(delegate, &next_work_info);
+    }
+  }
+}
+
+void MessagePumpKqueue::RunSimplified(Delegate* delegate) {
+  // Look for native work once before the loop starts. Without this call the
+  // loop would break without checking native work even once in cases where
+  // QuitWhenIdle was used. This is sometimes the case in tests.
+  DoInternalWork(delegate, nullptr);
 
   while (keep_running_) {
     mac::ScopedNSAutoreleasePool pool;
 
-    bool do_more_work = DoInternalWork(delegate, nullptr);
-    if (!keep_running_)
-      break;
-
     Delegate::NextWorkInfo next_work_info = delegate->DoWork();
-    do_more_work |= next_work_info.is_immediate();
     if (!keep_running_)
       break;
 
-    if (do_more_work)
-      continue;
-
-    do_more_work |= delegate->DoIdleWork();
+    if (!next_work_info.is_immediate()) {
+      delegate->DoIdleWork();
+    }
     if (!keep_running_)
       break;
-
-    if (do_more_work)
-      continue;
 
     DoInternalWork(delegate, &next_work_info);
   }
@@ -244,7 +290,7 @@ bool MessagePumpKqueue::WatchFileDescriptor(int fd,
   std::vector<kevent64_s> events;
 
   kevent64_s base_event{};
-  base_event.ident = fd;
+  base_event.ident = static_cast<uint64_t>(fd);
   base_event.flags = EV_ADD | (!persistent ? EV_ONESHOT : 0);
 
   if (mode & Mode::WATCH_READ) {
@@ -258,8 +304,9 @@ bool MessagePumpKqueue::WatchFileDescriptor(int fd,
     events.push_back(base_event);
   }
 
-  int rv = HANDLE_EINTR(kevent64(kqueue_.get(), events.data(), events.size(),
-                                 nullptr, 0, 0, nullptr));
+  int rv = HANDLE_EINTR(kevent64(kqueue_.get(), events.data(),
+                                 checked_cast<int>(events.size()), nullptr, 0,
+                                 0, nullptr));
   if (rv < 0) {
     DPLOG(ERROR) << "WatchFileDescriptor kevent64";
     return false;
@@ -323,13 +370,13 @@ bool MessagePumpKqueue::StopWatchingFileDescriptor(
   int mode = controller->mode();
   controller->Reset();
 
-  if (fd == -1)
+  if (fd < 0)
     return true;
 
   std::vector<kevent64_s> events;
 
   kevent64_s base_event{};
-  base_event.ident = fd;
+  base_event.ident = static_cast<uint64_t>(fd);
   base_event.flags = EV_DELETE;
 
   if (mode & Mode::WATCH_READ) {
@@ -341,13 +388,14 @@ bool MessagePumpKqueue::StopWatchingFileDescriptor(
     events.push_back(base_event);
   }
 
-  int rv = HANDLE_EINTR(kevent64(kqueue_.get(), events.data(), events.size(),
-                                 nullptr, 0, 0, nullptr));
+  int rv = HANDLE_EINTR(kevent64(kqueue_.get(), events.data(),
+                                 checked_cast<int>(events.size()), nullptr, 0,
+                                 0, nullptr));
   DPLOG_IF(ERROR, rv < 0) << "StopWatchingFileDescriptor kevent64";
 
   // The keys for the IDMap aren't recorded anywhere (they're attached to the
   // kevent object in the kernel), so locate the entries by controller pointer.
-  for (auto it = IDMap<FdWatchController*>::iterator(&fd_controllers_);
+  for (IDMap<FdWatchController*, uint64_t>::iterator it(&fd_controllers_);
        !it.IsAtEnd(); it.Advance()) {
     if (it.GetCurrentValue() == controller) {
       fd_controllers_.Remove(it.GetCurrentKey());
@@ -366,7 +414,7 @@ bool MessagePumpKqueue::DoInternalWork(Delegate* delegate,
   }
 
   bool immediate = next_work_info == nullptr;
-  int flags = immediate ? KEVENT_FLAG_IMMEDIATE : 0;
+  unsigned int flags = immediate ? KEVENT_FLAG_IMMEDIATE : 0;
 
   if (!immediate) {
     MaybeUpdateWakeupTimer(next_work_info->delayed_run_time);
@@ -374,22 +422,22 @@ bool MessagePumpKqueue::DoInternalWork(Delegate* delegate,
     delegate->BeforeWait();
   }
 
-  int rv = HANDLE_EINTR(kevent64(kqueue_.get(), nullptr, 0, events_.data(),
-                                 events_.size(), flags, nullptr));
-
-  PCHECK(rv >= 0) << "kevent64";
+  int rv =
+      HANDLE_EINTR(kevent64(kqueue_.get(), nullptr, 0, events_.data(),
+                            checked_cast<int>(events_.size()), flags, nullptr));
   if (rv == 0) {
     // No events to dispatch so no need to call ProcessEvents().
     return false;
   }
 
-  return ProcessEvents(delegate, rv);
+  PCHECK(rv > 0) << "kevent64";
+  return ProcessEvents(delegate, static_cast<size_t>(rv));
 }
 
-bool MessagePumpKqueue::ProcessEvents(Delegate* delegate, int count) {
+bool MessagePumpKqueue::ProcessEvents(Delegate* delegate, size_t count) {
   bool did_work = false;
 
-  for (int i = 0; i < count; ++i) {
+  for (size_t i = 0; i < count; ++i) {
     auto* event = &events_[i];
     if (event->filter == EVFILT_READ || event->filter == EVFILT_WRITE) {
       did_work = true;
@@ -412,13 +460,17 @@ bool MessagePumpKqueue::ProcessEvents(Delegate* delegate, int count) {
       }
 
       auto scoped_do_work_item = delegate->BeginWorkItem();
+      // WatchFileDescriptor() originally upcasts event->ident from an int.
       if (event->filter == EVFILT_READ) {
-        fd_watcher->OnFileCanReadWithoutBlocking(event->ident);
+        fd_watcher->OnFileCanReadWithoutBlocking(
+            static_cast<int>(event->ident));
       } else if (event->filter == EVFILT_WRITE) {
-        fd_watcher->OnFileCanWriteWithoutBlocking(event->ident);
+        fd_watcher->OnFileCanWriteWithoutBlocking(
+            static_cast<int>(event->ident));
       }
     } else if (event->filter == EVFILT_MACHPORT) {
-      mach_port_t port = event->ident;
+      // WatchMachReceivePort() originally sets event->ident from a mach_port_t.
+      mach_port_t port = static_cast<mach_port_t>(event->ident);
       if (port == wakeup_.get()) {
         // The wakeup event has been received, do not treat this as "doing
         // work", this just wakes up the pump.

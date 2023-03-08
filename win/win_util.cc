@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -253,16 +253,19 @@ bool IsWindows10OrGreaterTabletMode(HWND hwnd) {
     // instead we check if we're in slate mode or not - 0 value means slate
     // mode. See
     // https://docs.microsoft.com/en-us/windows-hardware/customize/desktop/unattend/microsoft-windows-gpiobuttons-convertibleslatemode
+
+    constexpr int kKeyboardPresent = 1;
     base::win::RegKey registry_key(
         HKEY_LOCAL_MACHINE,
         L"System\\CurrentControlSet\\Control\\PriorityControl", KEY_READ);
     DWORD slate_mode = 0;
     bool value_exists = registry_key.ReadValueDW(L"ConvertibleSlateMode",
                                                  &slate_mode) == ERROR_SUCCESS;
-    DCHECK(value_exists) << "ConvertibleSlateMode value not in registry";
-    // Some devices don't set the reg key to 0 for non touch devices, so also
-    // check if the device is used as a tablet.
-    return value_exists && slate_mode == 0 &&
+    // Some devices don't set the reg key to 1 for keyboard-only devices, so
+    // also check if the device is used as a tablet if it is not 1. Some devices
+    // don't set the registry key at all; fall back to checking if the device
+    // is used as a tablet for them as well.
+    return !(value_exists && slate_mode == kKeyboardPresent) &&
            IsDeviceUsedAsATablet(/*reason=*/nullptr);
   }
 
@@ -434,11 +437,13 @@ bool GetUserSidString(std::wstring* user_sid) {
   return true;
 }
 
+class ScopedAllowBlockingForUserAccountControl : public ScopedAllowBlocking {};
+
 bool UserAccountControlIsEnabled() {
   // This can be slow if Windows ends up going to disk.  Should watch this key
   // for changes and only read it once, preferably on the file thread.
   //   http://code.google.com/p/chromium/issues/detail?id=61644
-  ThreadRestrictions::ScopedAllowIO allow_io;
+  ScopedAllowBlockingForUserAccountControl allow_blocking;
 
   RegKey key(HKEY_LOCAL_MACHINE,
              L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System",
@@ -641,6 +646,11 @@ bool IsEnrolledToDomain() {
 }
 
 bool IsDeviceRegisteredWithManagement() {
+  // GetRegisteredWithManagementStateStorage() can be true for devices running
+  // the Home sku, however the Home sku does not allow for management of the web
+  // browser. As such, we automatically exclude devices running the Home sku.
+  if (OSInfo::GetInstance()->version_type() == SUITE_HOME)
+    return false;
   return *GetRegisteredWithManagementStateStorage();
 }
 
@@ -703,7 +713,8 @@ bool GetLoadedModulesSnapshot(HANDLE process, std::vector<HMODULE>* snapshot) {
     size_t num_modules = bytes_required / sizeof(HMODULE);
     if (num_modules <= snapshot->size()) {
       // Buffer size was too big, presumably because a module was unloaded.
-      snapshot->erase(snapshot->begin() + num_modules, snapshot->end());
+      snapshot->erase(snapshot->begin() + static_cast<ptrdiff_t>(num_modules),
+                      snapshot->end());
       return true;
     } else if (num_modules == 0) {
       DLOG(ERROR) << "Can't determine the module list size.";

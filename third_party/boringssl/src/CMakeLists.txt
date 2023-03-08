@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.10)
 
 # Defer enabling C and CXX languages.
 project(BoringSSL NONE)
@@ -122,10 +122,17 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
   set(EMSCRIPTEN 1)
 endif()
 
+set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+if(MSVC AND NOT CLANG)
+  set(CMAKE_C_STANDARD 11)
+  set(CMAKE_C_STANDARD_REQUIRED ON)
+endif()
+
 if(CMAKE_COMPILER_IS_GNUCXX OR CLANG)
   # Note clang-cl is odd and sets both CLANG and MSVC. We base our configuration
   # primarily on our normal Clang one.
-  set(C_CXX_FLAGS "-Werror -Wformat=2 -Wsign-compare -Wmissing-field-initializers -Wwrite-strings -Wvla -Wshadow")
+  set(C_CXX_FLAGS "-Werror -Wformat=2 -Wsign-compare -Wmissing-field-initializers -Wwrite-strings -Wvla -Wshadow -Wtype-limits")
   if(MSVC)
     # clang-cl sets different default warnings than clang. It also treats -Wall
     # as -Weverything, to match MSVC. Instead -W3 is the alias for -Wall.
@@ -153,7 +160,17 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CLANG)
     set(C_CXX_FLAGS "${C_CXX_FLAGS} -Wno-free-nonheap-object")
   endif()
 
-  if(CLANG OR NOT "7.0.0" VERSION_GREATER CMAKE_C_COMPILER_VERSION)
+  # -Wstring-concatenation was added in Clang 12.0.0, which corresponds to
+  # AppleClang 13.0.0 per the table in
+  # https://en.wikipedia.org/wiki/Xcode#Toolchain_versions
+  if((CMAKE_C_COMPILER_ID STREQUAL "Clang" AND
+      CMAKE_C_COMPILER_VERSION VERSION_GREATER_EQUAL "12.0.0") OR
+     (CMAKE_C_COMPILER_ID STREQUAL "AppleClang" AND
+      CMAKE_C_COMPILER_VERSION VERSION_GREATER_EQUAL "13.0.0"))
+    set(C_CXX_FLAGS "${C_CXX_FLAGS} -Wstring-concatenation")
+  endif()
+
+  if(CLANG OR CMAKE_C_COMPILER_VERSION VERSION_GREATER_EQUAL "7.0.0")
     set(C_CXX_FLAGS "${C_CXX_FLAGS} -Wimplicit-fallthrough")
   endif()
 
@@ -164,14 +181,8 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CLANG)
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${C_CXX_FLAGS} -Wmissing-prototypes -Wold-style-definition -Wstrict-prototypes")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${C_CXX_FLAGS} -Wmissing-declarations")
 
-  if(NOT MSVC)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14")
-    if(APPLE)
-      set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -stdlib=libc++")
-    endif()
-    if(NOT BORINGSSL_ALLOW_CXX_RUNTIME)
-      set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-exceptions -fno-rtti")
-    endif()
+  if(NOT MSVC AND NOT BORINGSSL_ALLOW_CXX_RUNTIME)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-exceptions -fno-rtti")
   endif()
 
   # In GCC, -Wmissing-declarations is the C++ spelling of -Wmissing-prototypes
@@ -259,10 +270,6 @@ if(WIN32)
   # A bug in CMake < 3.13.0 may cause the space in this value to
   # cause issues when building with NASM. In that case, update CMake.
   add_definitions("-D_STL_EXTRA_DISABLED_WARNINGS=4774 4987")
-endif()
-
-if(CMAKE_COMPILER_IS_GNUCXX)
-  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c11")
 endif()
 
 # pthread_rwlock_t on Linux requires a feature flag. We limit this to Linux
@@ -409,10 +416,13 @@ endif()
 
 function(go_executable dest package)
   set(godeps "${CMAKE_SOURCE_DIR}/util/godeps.go")
-  if(CMAKE_VERSION VERSION_LESS "3.7" OR NOT CMAKE_GENERATOR STREQUAL "Ninja")
-    # The DEPFILE parameter to add_custom_command is new as of CMake 3.7 and
-    # only works with Ninja. Query the sources at configure time. Additionally,
-    # everything depends on go.mod. That affects what external packages to use.
+  if(NOT CMAKE_GENERATOR STREQUAL "Ninja")
+    # The DEPFILE parameter to add_custom_command only works with Ninja. Query
+    # the sources at configure time. Additionally, everything depends on go.mod.
+    # That affects what external packages to use.
+    #
+    # TODO(davidben): Starting CMake 3.20, it also works with Make. Starting
+    # 3.21, it works with Visual Studio and Xcode too.
     execute_process(COMMAND ${GO_EXECUTABLE} run ${godeps} -format cmake
                             -pkg ${package}
                     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
@@ -497,6 +507,8 @@ elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "mips")
   set(ARCH "generic")
 elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "ppc64le")
   set(ARCH "ppc64le")
+elseif (${CMAKE_SYSTEM_PROCESSOR} STREQUAL "riscv64")
+  set(ARCH "riscv64")
 else()
   message(FATAL_ERROR "Unknown processor:" ${CMAKE_SYSTEM_PROCESSOR})
 endif()
@@ -546,9 +558,6 @@ if(USE_CUSTOM_LIBCXX)
     libcxxabi PRIVATE
     -D_LIBCPP_ENABLE_CXX17_REMOVED_UNEXPECTED_FUNCTIONS
   )
-  set_target_properties(libcxxabi PROPERTIES COMPILE_FLAGS "-Wno-missing-prototypes -Wno-implicit-fallthrough")
-  # libc++abi depends on libc++ internal headers.
-  set_property(TARGET libcxxabi APPEND PROPERTY INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/util/bot/libcxx/src")
   install(TARGETS libcxxabi EXPORT OpenSSLTargets)
 
   add_library(libcxx ${LIBCXX_SOURCES})
@@ -564,6 +573,15 @@ if(USE_CUSTOM_LIBCXX)
     -D_LIBCPP_BUILDING_LIBRARY
     -DLIBCXX_BUILDING_LIBCXXABI
   )
+  set_target_properties(
+    libcxx libcxxabi PROPERTIES
+    COMPILE_FLAGS "-Wno-missing-prototypes -Wno-implicit-fallthrough"
+    # libc++ and libc++abi must be built in C++20 mode.
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED TRUE
+  )
+  # libc++abi depends on libc++ internal headers.
+  set_property(TARGET libcxx libcxxabi APPEND PROPERTY INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/util/bot/libcxx/src")
   target_link_libraries(libcxx libcxxabi)
   install(TARGETS libcxx EXPORT OpenSSLTargets DESTINATION ${CMAKE_INSTALL_LIBDIR})
 endif()

@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -1096,8 +1096,7 @@ TEST(FlatTree, KeyComp) {
 
   EXPECT_TRUE(ranges::is_sorted(cont, cont.key_comp()));
   int new_elements[] = {6, 7, 8, 9, 10};
-  std::copy(std::begin(new_elements), std::end(new_elements),
-            std::inserter(cont, cont.end()));
+  ranges::copy(new_elements, std::inserter(cont, cont.end()));
   EXPECT_TRUE(ranges::is_sorted(cont, cont.key_comp()));
 }
 
@@ -1108,8 +1107,7 @@ TEST(FlatTree, ValueComp) {
 
   EXPECT_TRUE(ranges::is_sorted(cont, cont.value_comp()));
   int new_elements[] = {6, 7, 8, 9, 10};
-  std::copy(std::begin(new_elements), std::end(new_elements),
-            std::inserter(cont, cont.end()));
+  ranges::copy(new_elements, std::inserter(cont, cont.end()));
   EXPECT_TRUE(ranges::is_sorted(cont, cont.value_comp()));
 }
 

@@ -1,4 +1,4 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,7 +11,6 @@
 #include "base/debug/leak_annotations.h"
 #include "base/memory/ref_counted.h"
 #include "base/task/sequenced_task_runner.h"
-#include "base/threading/sequenced_task_runner_handle.h"
 
 namespace base {
 
@@ -135,15 +134,15 @@ bool PostTaskAndReplyImpl::PostTaskAndReply(const Location& from_here,
   DCHECK(task) << from_here.ToString();
   DCHECK(reply) << from_here.ToString();
 
-  const bool has_sequenced_context = SequencedTaskRunnerHandle::IsSet();
+  const bool has_sequenced_context = SequencedTaskRunner::HasCurrentDefault();
 
   const bool post_task_success = PostTask(
-      from_here,
-      BindOnce(&PostTaskAndReplyRelay::RunTaskAndPostReply,
-               PostTaskAndReplyRelay(
-                   from_here, std::move(task), std::move(reply),
-                   has_sequenced_context ? SequencedTaskRunnerHandle::Get()
-                                         : nullptr)));
+      from_here, BindOnce(&PostTaskAndReplyRelay::RunTaskAndPostReply,
+                          PostTaskAndReplyRelay(
+                              from_here, std::move(task), std::move(reply),
+                              has_sequenced_context
+                                  ? SequencedTaskRunner::GetCurrentDefault()
+                                  : nullptr)));
 
   // PostTaskAndReply() requires a SequencedTaskRunnerHandle to post the reply.
   // Having no SequencedTaskRunnerHandle is allowed when posting the task fails,

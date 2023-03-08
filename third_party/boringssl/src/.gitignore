@@ -15,13 +15,13 @@ util/bot/android_sdk/public
 util/bot/cmake-linux64
 util/bot/cmake-mac
 util/bot/cmake-win32
-util/bot/cmake-win32.zip
 util/bot/golang
 util/bot/libFuzzer
 util/bot/libcxx
 util/bot/libcxxabi
 util/bot/llvm-build
 util/bot/nasm-win32.exe
+util/bot/ninja
 util/bot/perl-win32
 util/bot/perl-win32.zip
 util/bot/sde-linux64

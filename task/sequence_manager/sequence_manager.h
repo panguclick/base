@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -28,18 +28,6 @@ class TaskObserver;
 namespace sequence_manager {
 
 class TimeDomain;
-
-// Represent outstanding work the sequence underlying a SequenceManager (e.g.,
-// a native system task for drawing the UI). As long as this handle is alive,
-// the work is considered to be pending.
-class NativeWorkHandle {
- public:
-  virtual ~NativeWorkHandle();
-  NativeWorkHandle(const NativeWorkHandle&) = delete;
-
- protected:
-  NativeWorkHandle() = default;
-};
 
 // SequenceManager manages TaskQueues which have different properties
 // (e.g. priority, common task type) multiplexing all posted tasks into
@@ -95,7 +83,8 @@ class BASE_EXPORT SequenceManager {
 
     MessagePumpType message_loop_type = MessagePumpType::DEFAULT;
     bool randomised_sampling_enabled = false;
-    raw_ptr<const TickClock> clock = DefaultTickClock::GetInstance();
+    raw_ptr<const TickClock, DanglingUntriaged> clock =
+        DefaultTickClock::GetInstance();
 
     // If true, add the timestamp the task got queued to the task.
     bool add_queue_time_to_tasks = false;
@@ -133,8 +122,7 @@ class BASE_EXPORT SequenceManager {
     // If not zero this seeds a PRNG used by the task selection logic to choose
     // a random TaskQueue for a given priority rather than the TaskQueue with
     // the oldest EnqueueOrder.
-    int random_task_selection_seed = 0;
-
+    uint64_t random_task_selection_seed = 0;
 #endif  // DCHECK_IS_ON()
   };
 
@@ -245,21 +233,16 @@ class BASE_EXPORT SequenceManager {
   // Returns a JSON string which describes all pending tasks.
   virtual std::string DescribeAllPendingTasks() const = 0;
 
-  // Indicates that the underlying sequence (e.g., the message pump) has pending
-  // work at priority `priority`. If the priority of the work in this
-  // SequenceManager is lower, it will yield to let the native work run. The
-  // native work is assumed to remain pending while the returned handle is
-  // valid.
-  //
-  // Must be called on the main thread, and the returned handle must also be
-  // deleted on the main thread.
-  virtual std::unique_ptr<NativeWorkHandle> OnNativeWorkPending(
-      TaskQueue::QueuePriority priority) = 0;
-
   // While Now() is less than `prioritize_until` we will alternate between a
   // SequenceManager task and a yielding to the underlying sequence (e.g., the
   // message pump).
   virtual void PrioritizeYieldingToNative(base::TimeTicks prioritize_until) = 0;
+
+  // Enable periodically yielding to the system message loop every |interval|.
+  // If |interval.is_inf()|, then SequenceManager won't yield to the system
+  // message pump unless it is out of immediate work.
+  // Currently only takes effect on Android.
+  virtual void EnablePeriodicYieldingToNative(base::TimeDelta interval) = 0;
 
   // Adds an observer which reports task execution. Can only be called on the
   // same thread that `this` is running on.
@@ -316,8 +299,7 @@ class BASE_EXPORT SequenceManager::Settings::Builder {
   // If not zero this seeds a PRNG used by the task selection logic to choose a
   // random TaskQueue for a given priority rather than the TaskQueue with the
   // oldest EnqueueOrder.
-  Builder& SetRandomTaskSelectionSeed(int random_task_selection_seed);
-
+  Builder& SetRandomTaskSelectionSeed(uint64_t random_task_selection_seed);
 #endif  // DCHECK_IS_ON()
 
   Settings Build();

@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -113,7 +113,7 @@ BigEndianWriter::BigEndianWriter(char* buf, size_t len)
 bool BigEndianWriter::Skip(size_t len) {
   if (len > remaining())
     return false;
-  ptr_ += static_cast<ptrdiff_t>(len);
+  ptr_ += len;
   return true;
 }
 
@@ -121,7 +121,7 @@ bool BigEndianWriter::WriteBytes(const void* buf, size_t len) {
   if (len > remaining())
     return false;
   memcpy(ptr_, buf, len);
-  ptr_ += static_cast<ptrdiff_t>(len);
+  ptr_ += len;
   return true;
 }
 

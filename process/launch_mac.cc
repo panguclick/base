@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -153,7 +153,7 @@ bool GetAppOutputInternal(const std::vector<std::string>& argv,
     read_this_pass = HANDLE_EINTR(
         read(read_fd.get(), &(*output)[total_bytes_read], kBufferSize));
     if (read_this_pass >= 0) {
-      total_bytes_read += read_this_pass;
+      total_bytes_read += static_cast<size_t>(read_this_pass);
       output->resize(total_bytes_read);
     }
   } while (read_this_pass > 0);

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -520,7 +520,7 @@ BASE_EXPORT int GetDisableAllVLogLevel();
   LAZY_STREAM(VLOG_STREAM(verbose_level), \
       VLOG_IS_ON(verbose_level) && (condition))
 
-#if defined (OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #define VPLOG_STREAM(verbose_level) \
   ::logging::Win32ErrorLogMessage(__FILE__, __LINE__, -(verbose_level), \
     ::logging::GetLastSystemErrorCode()).stream()
@@ -615,11 +615,11 @@ BASE_EXPORT extern std::ostream* g_swallow_stream;
 
 // Definitions for DCHECK et al.
 
-#if defined(DCHECK_IS_CONFIGURABLE)
+#if BUILDFLAG(DCHECK_IS_CONFIGURABLE)
 BASE_EXPORT extern LogSeverity LOGGING_DCHECK;
 #else
 constexpr LogSeverity LOGGING_DCHECK = LOGGING_FATAL;
-#endif  // defined(DCHECK_IS_CONFIGURABLE)
+#endif  // BUILDFLAG(DCHECK_IS_CONFIGURABLE)
 
 // Redefine the standard assert to use our nice log files
 #undef assert
@@ -646,8 +646,13 @@ class BASE_EXPORT LogMessage {
 
   std::ostream& stream() { return stream_; }
 
-  LogSeverity severity() { return severity_; }
-  std::string str() { return stream_.str(); }
+  LogSeverity severity() const { return severity_; }
+  std::string str() const { return stream_.str(); }
+  const char* file() const { return file_; }
+  int line() const { return line_; }
+
+  // Gets file:line: message in a format suitable for crash reporting.
+  std::string BuildCrashString() const;
 
  private:
   void Init(const char* file, int line);

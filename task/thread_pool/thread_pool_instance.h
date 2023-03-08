@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -57,12 +57,18 @@ class BASE_EXPORT ThreadPoolInstance {
 #endif  // BUILDFLAG(IS_WIN)
     };
 
-    InitParams(int max_num_foreground_threads_in);
+    InitParams(size_t max_num_foreground_threads_in);
+    InitParams(size_t max_num_foreground_threads_in,
+               size_t max_num_utility_threads_in);
     ~InitParams();
 
     // Maximum number of unblocked tasks that can run concurrently in the
     // foreground thread group.
-    int max_num_foreground_threads;
+    size_t max_num_foreground_threads;
+
+    // Maximum number of unblocked tasks that can run concurrently in the
+    // utility thread group.
+    size_t max_num_utility_threads;
 
     // Whether COM is initialized when running sequenced and parallel tasks.
     CommonThreadPoolEnvironment common_thread_pool_environment =
@@ -133,6 +139,15 @@ class BASE_EXPORT ThreadPoolInstance {
   virtual void Start(
       const InitParams& init_params,
       WorkerThreadObserver* worker_thread_observer = nullptr) = 0;
+
+  // Returns true if Start() was called. This will continue returning true even
+  // after Shutdown() is called. Must be called on the same sequence as Start().
+  virtual bool WasStarted() const = 0;
+
+  // Same as WasStarted(), but can be called from any sequence. The caller must
+  // make sure this call is properly synchronized with Start(), to avoid
+  // undefined behavior.
+  virtual bool WasStartedUnsafe() const = 0;
 
   // Synchronously shuts down the thread pool. Once this is called, only tasks
   // posted with the BLOCK_SHUTDOWN behavior will be run. When this returns:
@@ -235,7 +250,7 @@ class BASE_EXPORT ThreadPoolInstance {
   // n/GetMaxConcurrentNonBlockedTasksWithTraitsDeprecated() items.
   //
   // TODO(fdoray): Remove this method. https://crbug.com/687264
-  virtual int GetMaxConcurrentNonBlockedTasksWithTraitsDeprecated(
+  virtual size_t GetMaxConcurrentNonBlockedTasksWithTraitsDeprecated(
       const TaskTraits& traits) const = 0;
 
   // Starts/stops a fence that prevents scheduling of tasks of any / BEST_EFFORT

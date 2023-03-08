@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,13 +16,14 @@
 #include <wchar.h>
 #include <wctype.h>
 
-#include <algorithm>
 #include <limits>
 #include <type_traits>
 #include <vector>
 
 #include "base/check_op.h"
 #include "base/no_destructor.h"
+#include "base/ranges/algorithm.h"
+#include "base/strings/string_util_impl_helpers.h"
 #include "base/strings/string_util_internal.h"
 #include "base/strings/utf_string_conversion_utils.h"
 #include "base/strings/utf_string_conversions.h"
@@ -80,14 +81,6 @@ std::string ToUpperASCII(StringPiece str) {
 
 std::u16string ToUpperASCII(StringPiece16 str) {
   return internal::ToUpperASCIIImpl(str);
-}
-
-int CompareCaseInsensitiveASCII(StringPiece a, StringPiece b) {
-  return internal::CompareCaseInsensitiveASCIIT(a, b);
-}
-
-int CompareCaseInsensitiveASCII(StringPiece16 a, StringPiece16 b) {
-  return internal::CompareCaseInsensitiveASCIIT(a, b);
 }
 
 const std::string& EmptyString() {
@@ -174,7 +167,8 @@ void TruncateUTF8ToByteSize(const std::string& input,
   while (char_index >= 0) {
     int32_t prev = char_index;
     base_icu::UChar32 code_point = 0;
-    CBU8_NEXT(data, char_index, truncation_length, code_point);
+    CBU8_NEXT(reinterpret_cast<const uint8_t*>(data), char_index,
+              truncation_length, code_point);
     if (!IsValidCharacter(code_point)) {
       char_index = prev - 1;
     } else {
@@ -183,7 +177,7 @@ void TruncateUTF8ToByteSize(const std::string& input,
   }
 
   if (char_index >= 0 )
-    *output = input.substr(0, char_index);
+    *output = input.substr(0, static_cast<size_t>(char_index));
   else
     output->clear();
 }
@@ -254,16 +248,8 @@ bool IsStringUTF8AllowingNoncharacters(StringPiece str) {
   return internal::DoIsStringUTF8<IsValidCodepoint>(str);
 }
 
-bool LowerCaseEqualsASCII(StringPiece str, StringPiece lowercase_ascii) {
-  return internal::DoLowerCaseEqualsASCII(str, lowercase_ascii);
-}
-
-bool LowerCaseEqualsASCII(StringPiece16 str, StringPiece lowercase_ascii) {
-  return internal::DoLowerCaseEqualsASCII(str, lowercase_ascii);
-}
-
 bool EqualsASCII(StringPiece16 str, StringPiece ascii) {
-  return std::equal(ascii.begin(), ascii.end(), str.begin(), str.end());
+  return ranges::equal(ascii, str);
 }
 
 bool StartsWith(StringPiece str,

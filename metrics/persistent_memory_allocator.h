@@ -1,4 +1,4 @@
-// Copyright (c) 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -620,7 +620,7 @@ class BASE_EXPORT PersistentMemoryAllocator {
   struct Memory {
     Memory(void* b, MemoryType t) : base(b), type(t) {}
 
-    void* base;
+    raw_ptr<void> base;
     MemoryType type;
   };
 
@@ -643,7 +643,17 @@ class BASE_EXPORT PersistentMemoryAllocator {
  private:
   struct SharedMetadata;
   struct BlockHeader;
-  static const uint32_t kAllocAlignment;
+  // All allocations and data-structures must be aligned to this byte boundary.
+  // Alignment as large as the physical bus between CPU and RAM is _required_
+  // for some architectures, is simply more efficient on other CPUs, and
+  // generally a Good Idea(tm) for all platforms as it reduces/eliminates the
+  // chance that a type will span cache lines. Alignment mustn't be less
+  // than 8 to ensure proper alignment for all types. The rest is a balance
+  // between reducing spans across multiple cache lines and wasted space spent
+  // padding out allocations. An alignment of 16 would ensure that the block
+  // header structure always sits in a single cache line. An average of about
+  // 1/2 this value will be wasted with every allocation.
+  static constexpr size_t kAllocAlignment = 8;
   static const Reference kReferenceQueue;
 
   // The shared metadata is always located at the top of the memory segment.
@@ -695,10 +705,9 @@ class BASE_EXPORT PersistentMemoryAllocator {
   raw_ptr<HistogramBase> allocs_histogram_;  // Histogram recording allocs.
   raw_ptr<HistogramBase> used_histogram_;    // Histogram recording used space.
   raw_ptr<HistogramBase> errors_histogram_;  // Histogram recording errors.
-//delete by kingkong
-  // friend class PersistentMemoryAllocatorTest;
-  // FRIEND_TEST_ALL_PREFIXES(PersistentMemoryAllocatorTest, AllocateAndIterate);
-//end
+
+  friend class PersistentMemoryAllocatorTest;
+  FRIEND_TEST_ALL_PREFIXES(PersistentMemoryAllocatorTest, AllocateAndIterate);
 };
 
 
@@ -859,20 +868,6 @@ class BASE_EXPORT DelayedPersistentAllocation {
   // with every Get() request to see if the allocation has already been
   // done. If reading |ref| outside of this object, be sure to do an
   // "acquire" load. Don't write to it -- leave that to this object.
-  //
-  // For convenience, methods taking both Atomic32 and std::atomic<Reference>
-  // are defined.
-  DelayedPersistentAllocation(PersistentMemoryAllocator* allocator,
-                              subtle::Atomic32* ref,
-                              uint32_t type,
-                              size_t size,
-                              bool make_iterable);
-  DelayedPersistentAllocation(PersistentMemoryAllocator* allocator,
-                              subtle::Atomic32* ref,
-                              uint32_t type,
-                              size_t size,
-                              size_t offset,
-                              bool make_iterable);
   DelayedPersistentAllocation(PersistentMemoryAllocator* allocator,
                               std::atomic<Reference>* ref,
                               uint32_t type,
@@ -908,7 +903,7 @@ class BASE_EXPORT DelayedPersistentAllocation {
   // The underlying object that does the actual allocation of memory. Its
   // lifetime must exceed that of all DelayedPersistentAllocation objects
   // that use it.
-  PersistentMemoryAllocator* const allocator_;
+  const raw_ptr<PersistentMemoryAllocator> allocator_;
 
   // The desired type and size of the allocated segment plus the offset
   // within it for the defined request.
@@ -923,7 +918,7 @@ class BASE_EXPORT DelayedPersistentAllocation {
   // stored once the allocation is complete. If multiple delayed allocations
   // share the same pointer then an allocation on one will amount to an
   // allocation for all.
-  volatile std::atomic<Reference>* const reference_;
+  const raw_ptr<volatile std::atomic<Reference>> reference_;
 
   // No DISALLOW_COPY_AND_ASSIGN as it's okay to copy/move these objects.
 };

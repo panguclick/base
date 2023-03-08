@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -105,6 +105,13 @@ public class PiiEliderTest {
     }
 
     @Test
+    public void testElideUrl12() {
+        String original = "System.err: at kH.onAnimationEnd"
+                + "(chromium-TrichromeChromeGoogle6432.aab-canary-530200034:42)";
+        assertEquals(original, PiiElider.elideUrl(original));
+    }
+
+    @Test
     public void testElideNonHttpUrl() {
         String original = "test some-other-scheme://address/01010?param=33&other_param=AAA !!!";
         String expected = "test HTTP://WEBADDRESS.ELIDED !!!";
@@ -114,6 +121,13 @@ public class PiiEliderTest {
     @Test
     public void testDontElideFileSuffixes() {
         String original = "chromium_android_linker.so";
+        assertEquals(original, PiiElider.elideUrl(original));
+    }
+
+    @Test
+    public void testDontElideAndroidPermission() {
+        String original = "java.lang.SecurityException: get package info: "
+                + "Neither user 1210041 nor current process has android.permission.READ_LOGS";
         assertEquals(original, PiiElider.elideUrl(original));
     }
 

@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,13 +11,16 @@
 #include <type_traits>
 #include <utility>
 
-#include "base/as_const.h"
 #include "base/check.h"
 #include "base/containers/vector_buffer.h"
 #include "base/dcheck_is_on.h"
 #include "base/memory/raw_ptr_exclusion.h"
 #include "base/ranges/algorithm.h"
 #include "base/template_util.h"
+
+#if DCHECK_IS_ON()
+#include <ostream>
+#endif
 
 // base::circular_deque is similar to std::deque. Unlike std::deque, the
 // storage is provided in a flat circular buffer conceptually similar to a
@@ -428,7 +431,7 @@ class circular_deque {
   constexpr circular_deque() = default;
 
   // Constructs with |count| copies of |value| or default constructed version.
-  circular_deque(size_type count) { resize(count); }
+  explicit circular_deque(size_type count) { resize(count); }
   circular_deque(size_type count, const T& value) { resize(count, value); }
 
   // Range constructor.
@@ -529,11 +532,11 @@ class circular_deque {
     return buffer_[i - right_size];
   }
   value_type& at(size_type i) {
-    return const_cast<value_type&>(base::as_const(*this).at(i));
+    return const_cast<value_type&>(std::as_const(*this).at(i));
   }
 
   value_type& operator[](size_type i) {
-    return const_cast<value_type&>(base::as_const(*this)[i]);
+    return const_cast<value_type&>(std::as_const(*this)[i]);
   }
 
   const value_type& operator[](size_type i) const { return at(i); }

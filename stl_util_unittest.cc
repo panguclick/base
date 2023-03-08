@@ -1,4 +1,4 @@
-// Copyright 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -54,30 +54,6 @@ void RunConstCastIteratorTest() {
 
 namespace base {
 namespace {
-
-TEST(STLUtilTest, ToUnderlying) {
-  enum Enum : int {
-    kOne = 1,
-    kTwo = 2,
-  };
-
-  enum class ScopedEnum : char {
-    kOne = 1,
-    kTwo = 2,
-  };
-
-  static_assert(std::is_same<decltype(to_underlying(kOne)), int>::value, "");
-  static_assert(std::is_same<decltype(to_underlying(kTwo)), int>::value, "");
-  static_assert(to_underlying(kOne) == 1, "");
-  static_assert(to_underlying(kTwo) == 2, "");
-
-  static_assert(
-      std::is_same<decltype(to_underlying(ScopedEnum::kOne)), char>::value, "");
-  static_assert(
-      std::is_same<decltype(to_underlying(ScopedEnum::kTwo)), char>::value, "");
-  static_assert(to_underlying(ScopedEnum::kOne) == 1, "");
-  static_assert(to_underlying(ScopedEnum::kTwo) == 2, "");
-}
 
 TEST(STLUtilTest, GetUnderlyingContainer) {
   {
@@ -300,15 +276,6 @@ TEST(Erase, IsNotIn) {
   std::vector<int> expected = {2, 2, 4, 6};
   EXPECT_EQ(5u, EraseIf(lhs, IsNotIn<std::vector<int>>(rhs)));
   EXPECT_EQ(expected, lhs);
-}
-
-TEST(STLUtilTest, OptionalOrNullptr) {
-  absl::optional<float> optional;
-  EXPECT_EQ(nullptr, base::OptionalOrNullptr(optional));
-
-  optional = 0.1f;
-  EXPECT_EQ(&optional.value(), base::OptionalOrNullptr(optional));
-  EXPECT_NE(nullptr, base::OptionalOrNullptr(optional));
 }
 
 }  // namespace

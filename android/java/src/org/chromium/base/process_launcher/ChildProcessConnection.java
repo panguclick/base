@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
-import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
@@ -24,10 +24,10 @@ import org.chromium.base.BaseFeatureList;
 import org.chromium.base.BaseFeatures;
 import org.chromium.base.BuildInfo;
 import org.chromium.base.ChildBindingState;
-import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.MemoryPressureLevel;
 import org.chromium.base.MemoryPressureListener;
+import org.chromium.base.PackageUtils;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.TraceEvent;
 import org.chromium.base.memory.MemoryPressureCallback;
@@ -48,8 +48,9 @@ import javax.annotation.concurrent.GuardedBy;
  */
 public class ChildProcessConnection {
     private static final String TAG = "ChildProcessConn";
-    private static final int NUM_BINDING_STATES = ChildBindingState.MAX_VALUE + 1;
     private static final int FALLBACK_TIMEOUT_IN_SECONDS = 10;
+    private static final boolean SUPPORT_NOT_PERCEPTIBLE_BINDING =
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q;
 
     /**
      * Used to notify the consumer about the process start. These callbacks will be invoked before
@@ -118,6 +119,13 @@ public class ChildProcessConnection {
      */
     public static boolean supportVariableConnections() {
         return BindService.supportVariableConnections();
+    }
+
+    /**
+     * Run time check if not perceptible binding is supported.
+     */
+    public static boolean supportNotPerceptibleBinding() {
+        return SUPPORT_NOT_PERCEPTIBLE_BINDING;
     }
 
     /**
@@ -229,10 +237,14 @@ public class ChildProcessConnection {
     // Strong binding will make the service priority equal to the priority of the activity.
     private ChildServiceConnection mStrongBinding;
 
-    // Moderate binding will make the service priority equal to the priority of a visible process
+    // Visible binding will make the service priority equal to the priority of a visible process
     // while the app is in the foreground.
     // This is also used as the initial binding before any priorities are set.
-    private ChildServiceConnection mModerateBinding;
+    private ChildServiceConnection mVisibleBinding;
+
+    // On Android Q+ a not perceptible binding will make the service priority below that of a
+    // perceptible process of a backgrounded app. Only created on Android Q+.
+    private ChildServiceConnection mNotPerceptibleBinding;
 
     // Low priority binding maintained in the entire lifetime of the connection, i.e. between calls
     // to start() and stop().
@@ -240,7 +252,8 @@ public class ChildProcessConnection {
 
     // Refcount of bindings.
     private int mStrongBindingCount;
-    private int mModerateBindingCount;
+    private int mVisibleBindingCount;
+    private int mNotPerceptibleBindingCount;
 
     private int mGroup;
     private int mImportanceInGroup;
@@ -348,8 +361,14 @@ public class ChildProcessConnection {
         int defaultFlags = Context.BIND_AUTO_CREATE
                 | (mBindAsExternalService ? Context.BIND_EXTERNAL_SERVICE : 0);
 
-        mModerateBinding = mConnectionFactory.createConnection(
+        mVisibleBinding = mConnectionFactory.createConnection(
                 intent, defaultFlags, mConnectionDelegate, mInstanceName);
+        if (supportNotPerceptibleBinding()) {
+            mNotPerceptibleBinding = mConnectionFactory.createConnection(intent,
+                    defaultFlags | Context.BIND_NOT_PERCEPTIBLE, mConnectionDelegate,
+                    mInstanceName);
+        }
+
         mStrongBinding = mConnectionFactory.createConnection(
                 intent, defaultFlags | Context.BIND_IMPORTANT, mConnectionDelegate, mInstanceName);
         mWaivedBinding = mConnectionFactory.createConnection(intent,
@@ -536,7 +555,7 @@ public class ChildProcessConnection {
 
     private void recordChildAppInfoError(@ChildAppInfoError int error) {
         RecordHistogram.recordEnumeratedHistogram(
-                "Android.ChildMismatch.AppInfoError", error, ChildAppInfoError.MAX_VALUE);
+                "Android.ChildMismatch.AppInfoError2", error, ChildAppInfoError.MAX_VALUE);
     }
 
     @VisibleForTesting
@@ -570,7 +589,7 @@ public class ChildProcessConnection {
             }
 
             // Validate that the child process is running the same code as the parent process.
-            String childMismatchError;
+            String childMismatchError = null;
             try {
                 ApplicationInfo child = mService.getAppInfo();
                 ApplicationInfo parent = BuildInfo.getInstance().getBrowserApplicationInfo();
@@ -579,8 +598,7 @@ public class ChildProcessConnection {
                     recordChildAppInfoError(ChildAppInfoError.SOURCE_DIR_MISMATCH);
                     childMismatchError = "sourceDir mismatch; parent=" + parent.sourceDir
                             + " child=" + child.sourceDir;
-                }
-                if (!Arrays.equals(parent.sharedLibraryFiles, child.sharedLibraryFiles)) {
+                } else if (!Arrays.equals(parent.sharedLibraryFiles, child.sharedLibraryFiles)) {
                     recordChildAppInfoError(ChildAppInfoError.SHARED_LIB_MISMATCH);
                     childMismatchError = "sharedLibraryFiles mismatch; parent="
                             + Arrays.toString(parent.sharedLibraryFiles)
@@ -588,7 +606,6 @@ public class ChildProcessConnection {
                 }
                 // Don't compare splitSourceDirs as isolatedSplits/dynamic feature modules/etc make
                 // this potentially complicated.
-                childMismatchError = null;
             } catch (RemoteException ex) {
                 recordChildAppInfoError(ChildAppInfoError.REMOTE_EXCEPTION);
                 childMismatchError = "child didn't handle getAppInfo()";
@@ -596,20 +613,12 @@ public class ChildProcessConnection {
             if (childMismatchError != null) {
                 // Check if it looks like the browser's package version has been changed since the
                 // browser process launched (i.e. if the install somehow did not kill our process)
-                boolean versionHasChanged;
-                try {
-                    PackageInfo latestPackage =
-                            ContextUtils.getApplicationContext().getPackageManager().getPackageInfo(
-                                    BuildInfo.getInstance().packageName, 0);
-                    long latestVersionCode = BuildInfo.packageVersionCode(latestPackage);
-                    long loadedVersionCode = BuildInfo.getInstance().versionCode;
-                    versionHasChanged = latestVersionCode != loadedVersionCode;
-                } catch (PackageManager.NameNotFoundException e) {
-                    // Package uninstalled since we launched? Then the version has "changed"...
-                    versionHasChanged = true;
-                }
+                PackageInfo latestPackage = PackageUtils.getApplicationPackageInfo(0);
+                long latestVersionCode = BuildInfo.packageVersionCode(latestPackage);
+                long loadedVersionCode = BuildInfo.getInstance().versionCode;
+                boolean versionHasChanged = latestVersionCode != loadedVersionCode;
                 RecordHistogram.recordBooleanHistogram(
-                        "Android.ChildMismatch.BrowserVersionChanged", versionHasChanged);
+                        "Android.ChildMismatch.BrowserVersionChanged2", versionHasChanged);
                 childMismatchError += "; browser version has changed: " + versionHasChanged;
                 Log.e(TAG, "Child process code mismatch: %s", childMismatchError);
                 boolean crashIfBrowserChanged = BaseFeatureList.isEnabled(
@@ -669,7 +678,8 @@ public class ChildProcessConnection {
         StringBuilder s = new StringBuilder();
         s.append("bindings:");
         s.append(mWaivedBinding.isBound() ? "W" : " ");
-        s.append(mModerateBinding.isBound() ? "M" : " ");
+        s.append(mVisibleBinding.isBound() ? "V" : " ");
+        s.append(supportNotPerceptibleBinding() && mNotPerceptibleBinding.isBound() ? "N" : " ");
         s.append(mStrongBinding.isBound() ? "S" : " ");
         return s.toString();
     }
@@ -791,10 +801,11 @@ public class ChildProcessConnection {
         boolean success;
         boolean usedFallback = sAlwaysFallback && mFallbackServiceName != null;
         if (useStrongBinding) {
+            mStrongBindingCount++;
             success = mStrongBinding.bindServiceConnection();
         } else {
-            mModerateBindingCount++;
-            success = mModerateBinding.bindServiceConnection();
+            mVisibleBindingCount++;
+            success = mVisibleBinding.bindServiceConnection();
         }
         if (!success) {
             // Note this error condition is generally transient so `sAlwaysFallback` is
@@ -833,10 +844,15 @@ public class ChildProcessConnection {
         assert mFallbackServiceName != null;
         Log.w(TAG, "Fallback to %s", mFallbackServiceName);
         boolean isStrongBindingBound = mStrongBinding.isBound();
-        boolean isModerateBindingBound = mModerateBinding.isBound();
+        boolean isVisibleBindingBound = mVisibleBinding.isBound();
+        boolean isNotPerceptibleBindingBound =
+                supportNotPerceptibleBinding() && mNotPerceptibleBinding.isBound();
         boolean isWaivedBindingBound = mWaivedBinding.isBound();
         mStrongBinding.retire();
-        mModerateBinding.retire();
+        mVisibleBinding.retire();
+        if (supportNotPerceptibleBinding()) {
+            mNotPerceptibleBinding.retire();
+        }
         mWaivedBinding.retire();
         createBindings(mFallbackServiceName);
         // Expect all bindings to succeed or fail together. So early out as soon as
@@ -846,8 +862,13 @@ public class ChildProcessConnection {
                 return false;
             }
         }
-        if (isModerateBindingBound) {
-            if (!mModerateBinding.bindServiceConnection()) {
+        if (isVisibleBindingBound) {
+            if (!mVisibleBinding.bindServiceConnection()) {
+                return false;
+            }
+        }
+        if (isNotPerceptibleBindingBound) {
+            if (!mNotPerceptibleBinding.bindServiceConnection()) {
                 return false;
             }
         }
@@ -867,7 +888,10 @@ public class ChildProcessConnection {
         mUnbound = true;
         mStrongBinding.unbindServiceConnection();
         mWaivedBinding.unbindServiceConnection();
-        mModerateBinding.unbindServiceConnection();
+        if (supportNotPerceptibleBinding()) {
+            mNotPerceptibleBinding.unbindServiceConnection();
+        }
+        mVisibleBinding.unbindServiceConnection();
         updateBindingState();
 
         if (mMemoryPressureCallback != null) {
@@ -932,43 +956,89 @@ public class ChildProcessConnection {
         }
     }
 
-    public boolean isModerateBindingBound() {
+    public boolean isVisibleBindingBound() {
         assert isRunningOnLauncherThread();
-        return mModerateBinding.isBound();
+        return mVisibleBinding.isBound();
     }
 
-    /**
-     * @param waiveCpuPriority Normally moderate binding may raise the CPU scheduling priority
-     * as well as the importance for memory management. Pass true to not affect CPU scheduling
-     * priority. Note the refcounts for waiveCpuPriority and not are separate,
-     * so removeModerateBinding parameter must match.
-     */
-    public void addModerateBinding() {
+    public int getVisibleBindingCount() {
+        assert isRunningOnLauncherThread();
+        return mVisibleBindingCount;
+    }
+
+    public void addVisibleBinding() {
         assert isRunningOnLauncherThread();
         if (!isConnected()) {
             Log.w(TAG, "The connection is not bound for %d", getPid());
             return;
         }
-        if (mModerateBindingCount == 0) {
-            mModerateBinding.bindServiceConnection();
+        if (mVisibleBindingCount == 0) {
+            mVisibleBinding.bindServiceConnection();
             updateBindingState();
         }
-        mModerateBindingCount++;
+        mVisibleBindingCount++;
     }
 
-    /**
-     * @param waiveCpuPriority See addModerateBinding.
-     */
-    public void removeModerateBinding() {
+    public void removeVisibleBinding() {
         assert isRunningOnLauncherThread();
         if (!isConnected()) {
             return;
         }
-        assert mModerateBindingCount > 0;
-        mModerateBindingCount--;
-        if (mModerateBindingCount == 0) {
-            mModerateBinding.unbindServiceConnection();
+        assert mVisibleBindingCount > 0;
+        mVisibleBindingCount--;
+        if (mVisibleBindingCount == 0) {
+            mVisibleBinding.unbindServiceConnection();
             updateBindingState();
+        }
+    }
+
+    public boolean isNotPerceptibleBindingBound() {
+        assert isRunningOnLauncherThread();
+        return supportNotPerceptibleBinding() && mNotPerceptibleBinding.isBound();
+    }
+
+    public int getNotPerceptibleBindingCount() {
+        assert isRunningOnLauncherThread();
+        return mNotPerceptibleBindingCount;
+    }
+
+    public void addNotPerceptibleBinding() {
+        assert isRunningOnLauncherThread();
+        assert supportNotPerceptibleBinding();
+        if (!isConnected()) {
+            Log.w(TAG, "The connection is not bound for %d", getPid());
+            return;
+        }
+        if (mNotPerceptibleBindingCount == 0) {
+            mNotPerceptibleBinding.bindServiceConnection();
+            updateBindingState();
+        }
+        mNotPerceptibleBindingCount++;
+    }
+
+    public void removeNotPerceptibleBinding() {
+        assert isRunningOnLauncherThread();
+        assert supportNotPerceptibleBinding();
+        if (!isConnected()) {
+            return;
+        }
+        assert mNotPerceptibleBindingCount > 0;
+        mNotPerceptibleBindingCount--;
+        if (mNotPerceptibleBindingCount == 0) {
+            mNotPerceptibleBinding.unbindServiceConnection();
+            updateBindingState();
+        }
+    }
+
+    /**
+     * @return the current connection binding state.
+     */
+    public @ChildBindingState int bindingStateCurrent() {
+        // WARNING: this method can be called from a thread other than the launcher thread.
+        // Note that it returns the current waived bound only state and is racy. This not really
+        // preventable without changing the caller's API, short of blocking.
+        synchronized (mBindingStateLock) {
+            return mBindingState;
         }
     }
 
@@ -1023,8 +1093,10 @@ public class ChildProcessConnection {
             newBindingState = ChildBindingState.UNBOUND;
         } else if (mStrongBinding.isBound()) {
             newBindingState = ChildBindingState.STRONG;
-        } else if (mModerateBinding.isBound()) {
-            newBindingState = ChildBindingState.MODERATE;
+        } else if (mVisibleBinding.isBound()) {
+            newBindingState = ChildBindingState.VISIBLE;
+        } else if (supportNotPerceptibleBinding() && mNotPerceptibleBinding.isBound()) {
+            newBindingState = ChildBindingState.NOT_PERCEPTIBLE;
         } else {
             assert mWaivedBinding.isBound();
             newBindingState = ChildBindingState.WAIVED;

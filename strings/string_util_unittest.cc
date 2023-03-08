@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -479,23 +479,26 @@ static const struct collapse_case_ascii {
   const bool trim;
   const char* output;
 } collapse_cases_ascii[] = {
-  {" Google Video ", false, "Google Video"},
-  {"Google Video", false, "Google Video"},
-  {"", false, ""},
-  {"  ", false, ""},
-  {"\t\rTest String\n", false, "Test String"},
-  {"    Test     \n  \t String    ", false, "Test String"},
-  {"   Test String", false, "Test String"},
-  {"Test String    ", false, "Test String"},
-  {"Test String", false, "Test String"},
-  {"", true, ""},
-  {"\n", true, ""},
-  {"  \r  ", true, ""},
-  {"\nFoo", true, "Foo"},
-  {"\r  Foo  ", true, "Foo"},
-  {" Foo bar ", true, "Foo bar"},
-  {"  \tFoo  bar  \n", true, "Foo bar"},
-  {" a \r b\n c \r\n d \t\re \t f \n ", true, "abcde f"},
+    {" Google Video ", false, "Google Video"},
+    {"Google Video", false, "Google Video"},
+    {"", false, ""},
+    {"  ", false, ""},
+    {"\t\rTest String\n", false, "Test String"},
+    {"    Test     \n  \t String    ", false, "Test String"},
+    {"   Test String", false, "Test String"},
+    {"Test String    ", false, "Test String"},
+    {"Test String", false, "Test String"},
+    {"", true, ""},
+    {"\n", true, ""},
+    {"  \r  ", true, ""},
+    {"\nFoo", true, "Foo"},
+    {"\r  Foo  ", true, "Foo"},
+    {" Foo bar ", true, "Foo bar"},
+    // \u00A0 is whitespace, but not _ASCII_ whitespace, so it should not be
+    // collapsed by CollapseWhitespaceASCII().
+    {"Foo\u00A0bar", true, "Foo\u00A0bar"},
+    {"  \tFoo  bar  \n", true, "Foo bar"},
+    {" a \r b\n c \r\n d \t\re \t f \n ", true, "abcde f"},
 };
 
 TEST(StringUtilTest, CollapseWhitespaceASCII) {
@@ -645,6 +648,11 @@ TEST(StringUtilTest, ToLowerASCII) {
 
   EXPECT_EQ("cc2", ToLowerASCII("Cc2"));
   EXPECT_EQ(u"cc2", ToLowerASCII(u"Cc2"));
+
+  // Non-ASCII characters are unmodified. U+00C4 is LATIN CAPITAL LETTER A WITH
+  // DIAERESIS.
+  EXPECT_EQ('\xc4', ToLowerASCII('\xc4'));
+  EXPECT_EQ(u'\x00c4', ToLowerASCII(u'\x00c4'));
 }
 
 TEST(StringUtilTest, ToUpperASCII) {
@@ -658,22 +666,11 @@ TEST(StringUtilTest, ToUpperASCII) {
 
   EXPECT_EQ("CC2", ToUpperASCII("Cc2"));
   EXPECT_EQ(u"CC2", ToUpperASCII(u"Cc2"));
-}
 
-TEST(StringUtilTest, LowerCaseEqualsASCII) {
-  static const struct {
-    const char*    src_a;
-    const char*    dst;
-  } lowercase_cases[] = {
-    { "FoO", "foo" },
-    { "foo", "foo" },
-    { "FOO", "foo" },
-  };
-
-  for (const auto& i : lowercase_cases) {
-    EXPECT_TRUE(LowerCaseEqualsASCII(ASCIIToUTF16(i.src_a), i.dst));
-    EXPECT_TRUE(LowerCaseEqualsASCII(i.src_a, i.dst));
-  }
+  // Non-ASCII characters are unmodified. U+00E4 is LATIN SMALL LETTER A WITH
+  // DIAERESIS.
+  EXPECT_EQ('\xe4', ToUpperASCII('\xe4'));
+  EXPECT_EQ(u'\x00e4', ToUpperASCII(u'\x00e4'));
 }
 
 TEST(StringUtilTest, FormatBytesUnlocalized) {
@@ -1340,6 +1337,28 @@ TEST(StringUtilTest, MakeBasicStringPieceTest) {
   EXPECT_TRUE(MakeWStringPiece(baz.end(), baz.end()).empty());
 }
 
+enum class StreamableTestEnum { kGreeting, kLocation };
+
+std::ostream& operator<<(std::ostream& os, const StreamableTestEnum& value) {
+  switch (value) {
+    case StreamableTestEnum::kGreeting:
+      return os << "hello";
+    case StreamableTestEnum::kLocation:
+      return os << "world";
+  }
+}
+
+TEST(StringUtilTest, StreamableToString) {
+  EXPECT_EQ(StreamableToString("foo"), "foo");
+  EXPECT_EQ(StreamableToString(123), "123");
+  EXPECT_EQ(StreamableToString(StreamableTestEnum::kGreeting), "hello");
+  EXPECT_EQ(StreamableToString(StreamableTestEnum::kGreeting, " ",
+                               StreamableTestEnum::kLocation),
+            "hello world");
+  EXPECT_EQ(StreamableToString("42 in hex is ", std::hex, 42),
+            "42 in hex is 2a");
+}
+
 TEST(StringUtilTest, RemoveChars) {
   const char kRemoveChars[] = "-/+*";
   std::string input = "A-+bc/d!*";
@@ -1465,6 +1484,31 @@ TEST(StringUtilTest, CompareCaseInsensitiveASCII) {
   // Differing values.
   EXPECT_EQ(-1, CompareCaseInsensitiveASCII("AsdfA", "aSDfb"));
   EXPECT_EQ(1, CompareCaseInsensitiveASCII("Asdfb", "aSDfA"));
+
+  // Non-ASCII bytes are permitted, but they will be compared case-sensitively.
+  EXPECT_EQ(0, CompareCaseInsensitiveASCII("aaa \xc3\xa4", "AAA \xc3\xa4"));
+  EXPECT_EQ(-1, CompareCaseInsensitiveASCII("AAA \xc3\x84", "aaa \xc3\xa4"));
+  EXPECT_EQ(1, CompareCaseInsensitiveASCII("aaa \xc3\xa4", "AAA \xc3\x84"));
+
+  // ASCII bytes should sort before non-ASCII ones.
+  EXPECT_EQ(-1, CompareCaseInsensitiveASCII("a", "\xc3\xa4"));
+  EXPECT_EQ(1, CompareCaseInsensitiveASCII("\xc3\xa4", "a"));
+
+  // For constexpr.
+  static_assert(CompareCaseInsensitiveASCII("", "") == 0);
+  static_assert(CompareCaseInsensitiveASCII("Asdf", "aSDf") == 0);
+  static_assert(CompareCaseInsensitiveASCII("Asdf", "aSDfA") == -1);
+  static_assert(CompareCaseInsensitiveASCII("AsdfA", "aSDf") == 1);
+  static_assert(CompareCaseInsensitiveASCII("AsdfA", "aSDfb") == -1);
+  static_assert(CompareCaseInsensitiveASCII("Asdfb", "aSDfA") == 1);
+  static_assert(CompareCaseInsensitiveASCII("aaa \xc3\xa4", "AAA \xc3\xa4") ==
+                0);
+  static_assert(CompareCaseInsensitiveASCII("AAA \xc3\x84", "aaa \xc3\xa4") ==
+                -1);
+  static_assert(CompareCaseInsensitiveASCII("aaa \xc3\xa4", "AAA \xc3\x84") ==
+                1);
+  static_assert(CompareCaseInsensitiveASCII("a", "\xc3\xa4") == -1);
+  static_assert(CompareCaseInsensitiveASCII("\xc3\xa4", "a") == 1);
 }
 
 TEST(StringUtilTest, EqualsCaseInsensitiveASCII) {
@@ -1487,6 +1531,10 @@ TEST(StringUtilTest, EqualsCaseInsensitiveASCII) {
   EXPECT_TRUE(EqualsCaseInsensitiveASCII("Asdf", u"aSDF"));
   EXPECT_FALSE(EqualsCaseInsensitiveASCII("bsdf", u"aSDF"));
   EXPECT_FALSE(EqualsCaseInsensitiveASCII("Asdf", u"aSDFz"));
+
+  // Non-ASCII bytes are permitted, but they will be compared case-sensitively.
+  EXPECT_TRUE(EqualsCaseInsensitiveASCII("aaa \xc3\xa4", "AAA \xc3\xa4"));
+  EXPECT_FALSE(EqualsCaseInsensitiveASCII("aaa \xc3\x84", "AAA \xc3\xa4"));
 
   // The `WStringPiece` overloads are only defined on Windows.
 #if BUILDFLAG(IS_WIN)

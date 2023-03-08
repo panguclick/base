@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -327,7 +327,7 @@ DWORD (*g_tick_function)(void) = &timeGetTimeWrapper;
 // "rollover" counter.
 union LastTimeAndRolloversState {
   // The state as a single 32-bit opaque value.
-  std::atomic<int32_t> as_opaque_32;
+  std::atomic<int32_t> as_opaque_32{0};
 
   // The state as usable values.
   struct {

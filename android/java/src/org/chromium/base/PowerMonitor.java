@@ -1,4 +1,4 @@
-// Copyright 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -45,7 +45,7 @@ public class PowerMonitor {
         sInstance = new PowerMonitor();
         IntentFilter ifilter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
         Intent batteryStatusIntent =
-                ContextUtils.registerNonExportedBroadcastReceiver(context, null, ifilter);
+                ContextUtils.registerProtectedBroadcastReceiver(context, null, ifilter);
         if (batteryStatusIntent != null) {
             // Default to 0, which the EXTRA_PLUGGED docs indicate means "on battery power".  There
             // is no symbolic constant.  Nonzero values indicate we have some external power source.
@@ -57,7 +57,7 @@ public class PowerMonitor {
         IntentFilter powerConnectedFilter = new IntentFilter();
         powerConnectedFilter.addAction(Intent.ACTION_POWER_CONNECTED);
         powerConnectedFilter.addAction(Intent.ACTION_POWER_DISCONNECTED);
-        ContextUtils.registerNonExportedBroadcastReceiver(context, new BroadcastReceiver() {
+        ContextUtils.registerProtectedBroadcastReceiver(context, new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
                 PowerMonitor.onBatteryChargingChanged(

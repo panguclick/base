@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 #include "base/bind.h"
 #include "base/check.h"
 #include "base/feature_list.h"
+#include "base/task/common/checked_lock.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/task_features.h"
 #include "base/task/task_runner.h"
@@ -45,38 +46,40 @@ bool DelayedTaskManager::DelayedTask::operator>(
          std::tie(other_latest_delayed_run_time, other.task.sequence_num);
 }
 
-bool DelayedTaskManager::DelayedTask::IsScheduled() const {
-  return scheduled_;
-}
-void DelayedTaskManager::DelayedTask::SetScheduled() {
-  DCHECK(!scheduled_);
-  scheduled_ = true;
-}
-
 DelayedTaskManager::DelayedTaskManager(const TickClock* tick_clock)
     : process_ripe_tasks_closure_(
           BindRepeating(&DelayedTaskManager::ProcessRipeTasks,
                         Unretained(this))),
+      schedule_process_ripe_tasks_closure_(BindRepeating(
+          &DelayedTaskManager::ScheduleProcessRipeTasksOnServiceThread,
+          Unretained(this))),
       tick_clock_(tick_clock) {
+  DETACH_FROM_SEQUENCE(sequence_checker_);
   DCHECK(tick_clock_);
 }
 
-DelayedTaskManager::~DelayedTaskManager() = default;
+DelayedTaskManager::~DelayedTaskManager() {
+  delayed_task_handle_.CancelTask();
+}
 
 void DelayedTaskManager::Start(
     scoped_refptr<SequencedTaskRunner> service_thread_task_runner) {
   DCHECK(service_thread_task_runner);
 
   TimeTicks process_ripe_tasks_time;
+  subtle::DelayPolicy delay_policy;
   {
     CheckedAutoLock auto_lock(queue_lock_);
     DCHECK(!service_thread_task_runner_);
     service_thread_task_runner_ = std::move(service_thread_task_runner);
-    process_ripe_tasks_time = GetTimeToScheduleProcessRipeTasksLockRequired();
     align_wake_ups_ = FeatureList::IsEnabled(kAlignWakeUps);
-    task_leeway_ = kTaskLeewayParam.Get();
+    std::tie(process_ripe_tasks_time, delay_policy) =
+        GetTimeAndDelayPolicyToScheduleProcessRipeTasksLockRequired();
   }
-  ScheduleProcessRipeTasksOnServiceThread(process_ripe_tasks_time);
+  if (!process_ripe_tasks_time.is_max()) {
+    service_thread_task_runner_->PostTask(FROM_HERE,
+                                          schedule_process_ripe_tasks_closure_);
+  }
 }
 
 void DelayedTaskManager::AddDelayedTask(
@@ -85,22 +88,36 @@ void DelayedTaskManager::AddDelayedTask(
     scoped_refptr<TaskRunner> task_runner) {
   DCHECK(task.task);
   DCHECK(!task.delayed_run_time.is_null());
+  DCHECK(!task.queue_time.is_null());
 
   // Use CHECK instead of DCHECK to crash earlier. See http://crbug.com/711167
   // for details.
   CHECK(task.task);
   TimeTicks process_ripe_tasks_time;
+  subtle::DelayPolicy delay_policy;
   {
     CheckedAutoLock auto_lock(queue_lock_);
+    auto [old_process_ripe_tasks_time, old_delay_policy] =
+        GetTimeAndDelayPolicyToScheduleProcessRipeTasksLockRequired();
     delayed_task_queue_.insert(DelayedTask(std::move(task),
                                            std::move(post_task_now_callback),
                                            std::move(task_runner)));
-    // Not started yet.
+    // Not started or already shutdown.
     if (service_thread_task_runner_ == nullptr)
       return;
-    process_ripe_tasks_time = GetTimeToScheduleProcessRipeTasksLockRequired();
+
+    std::tie(process_ripe_tasks_time, delay_policy) =
+        GetTimeAndDelayPolicyToScheduleProcessRipeTasksLockRequired();
+    // The next invocation of ProcessRipeTasks() doesn't need to change.
+    if (old_process_ripe_tasks_time == process_ripe_tasks_time &&
+        old_delay_policy == delay_policy) {
+      return;
+    }
   }
-  ScheduleProcessRipeTasksOnServiceThread(process_ripe_tasks_time);
+  if (!process_ripe_tasks_time.is_max()) {
+    service_thread_task_runner_->PostTask(FROM_HERE,
+                                          schedule_process_ripe_tasks_closure_);
+  }
 }
 
 void DelayedTaskManager::ProcessRipeTasks() {
@@ -109,6 +126,11 @@ void DelayedTaskManager::ProcessRipeTasks() {
 
   {
     CheckedAutoLock auto_lock(queue_lock_);
+
+    // Already shutdown.
+    if (!service_thread_task_runner_)
+      return;
+
     const TimeTicks now = tick_clock_->NowTicks();
     // A delayed task is ripe if it reached its delayed run time or if it is
     // canceled. If it is canceled, schedule its deletion on the correct
@@ -124,9 +146,18 @@ void DelayedTaskManager::ProcessRipeTasks() {
           std::move(const_cast<DelayedTask&>(delayed_task_queue_.top())));
       delayed_task_queue_.pop();
     }
-    process_ripe_tasks_time = GetTimeToScheduleProcessRipeTasksLockRequired();
+    std::tie(process_ripe_tasks_time, std::ignore) =
+        GetTimeAndDelayPolicyToScheduleProcessRipeTasksLockRequired();
   }
-  ScheduleProcessRipeTasksOnServiceThread(process_ripe_tasks_time);
+  if (!process_ripe_tasks_time.is_max()) {
+    if (service_thread_task_runner_->RunsTasksInCurrentSequence()) {
+      ScheduleProcessRipeTasksOnServiceThread();
+    } else {
+      // ProcessRipeTasks may be called on another thread under tests.
+      service_thread_task_runner_->PostTask(
+          FROM_HERE, schedule_process_ripe_tasks_closure_);
+    }
+  }
 
   for (auto& delayed_task : ripe_delayed_tasks) {
     std::move(delayed_task.callback).Run(std::move(delayed_task.task));
@@ -140,36 +171,68 @@ absl::optional<TimeTicks> DelayedTaskManager::NextScheduledRunTime() const {
   return delayed_task_queue_.top().task.delayed_run_time;
 }
 
-TimeTicks DelayedTaskManager::GetTimeToScheduleProcessRipeTasksLockRequired() {
-  queue_lock_.AssertAcquired();
-  if (delayed_task_queue_.empty())
-    return TimeTicks::Max();
-  // The const_cast on top is okay since |IsScheduled()| and |SetScheduled()|
-  // don't alter the sort order.
-  DelayedTask& ripest_delayed_task =
-      const_cast<DelayedTask&>(delayed_task_queue_.top());
-  if (ripest_delayed_task.IsScheduled())
-    return TimeTicks::Max();
-  ripest_delayed_task.SetScheduled();
-
-  if (align_wake_ups_) {
-    TimeTicks aligned_run_time =
-        ripest_delayed_task.task.earliest_delayed_run_time().SnappedToNextTick(
-            TimeTicks(), task_leeway_);
-    return std::min(aligned_run_time,
-                    ripest_delayed_task.task.latest_delayed_run_time());
-  }
-  return ripest_delayed_task.task.delayed_run_time;
+subtle::DelayPolicy DelayedTaskManager::TopTaskDelayPolicyForTesting() const {
+  CheckedAutoLock auto_lock(queue_lock_);
+  return delayed_task_queue_.top().task.delay_policy;
 }
 
-void DelayedTaskManager::ScheduleProcessRipeTasksOnServiceThread(
-    TimeTicks next_delayed_task_run_time) {
-  DCHECK(!next_delayed_task_run_time.is_null());
-  if (next_delayed_task_run_time.is_max())
+void DelayedTaskManager::Shutdown() {
+  scoped_refptr<SequencedTaskRunner> service_thread_task_runner;
+
+  {
+    CheckedAutoLock auto_lock(queue_lock_);
+    // Prevent delayed tasks from being posted or processed after this.
+    service_thread_task_runner = service_thread_task_runner_;
+  }
+
+  if (service_thread_task_runner) {
+    // Cancel our delayed task on the service thread. This cannot be done from
+    // ~DelayedTaskManager because the delayed task handle is sequence-affine.
+    service_thread_task_runner->PostTask(
+        FROM_HERE,
+        base::BindOnce(
+            [](DelayedTaskManager* manager) {
+              DCHECK_CALLED_ON_VALID_SEQUENCE(manager->sequence_checker_);
+              manager->delayed_task_handle_.CancelTask();
+            },
+            // Unretained() is safe because the caller must flush tasks posted
+            // to the service thread before deleting `this`.
+            Unretained(this)));
+  }
+}
+
+std::pair<TimeTicks, subtle::DelayPolicy> DelayedTaskManager::
+    GetTimeAndDelayPolicyToScheduleProcessRipeTasksLockRequired() {
+  queue_lock_.AssertAcquired();
+  if (delayed_task_queue_.empty()) {
+    return std::make_pair(TimeTicks::Max(),
+                          subtle::DelayPolicy::kFlexibleNoSooner);
+  }
+
+  const DelayedTask& ripest_delayed_task = delayed_task_queue_.top();
+  subtle::DelayPolicy delay_policy = ripest_delayed_task.task.delay_policy;
+  return std::make_pair(ripest_delayed_task.task.delayed_run_time,
+                        delay_policy);
+}
+
+void DelayedTaskManager::ScheduleProcessRipeTasksOnServiceThread() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  TimeTicks process_ripe_tasks_time;
+  subtle::DelayPolicy delay_policy;
+  {
+    CheckedAutoLock auto_lock(queue_lock_);
+    std::tie(process_ripe_tasks_time, delay_policy) =
+        GetTimeAndDelayPolicyToScheduleProcessRipeTasksLockRequired();
+  }
+  DCHECK(!process_ripe_tasks_time.is_null());
+  if (process_ripe_tasks_time.is_max())
     return;
-  service_thread_task_runner_->PostDelayedTaskAt(
-      subtle::PostDelayedTaskPassKey(), FROM_HERE, process_ripe_tasks_closure_,
-      next_delayed_task_run_time, subtle::DelayPolicy::kPrecise);
+  delayed_task_handle_.CancelTask();
+  delayed_task_handle_ =
+      service_thread_task_runner_->PostCancelableDelayedTaskAt(
+          subtle::PostDelayedTaskPassKey(), FROM_HERE,
+          process_ripe_tasks_closure_, process_ripe_tasks_time, delay_policy);
 }
 
 }  // namespace internal

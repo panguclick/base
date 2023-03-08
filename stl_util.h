@@ -1,4 +1,4 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,7 +14,6 @@
 
 #include "base/check.h"
 #include "base/ranges/algorithm.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace base {
 
@@ -26,17 +25,6 @@ constexpr bool IsRandomAccessIter =
                  std::random_access_iterator_tag>::value;
 
 }  // namespace internal
-
-// Implementation of C++23's std::to_underlying.
-//
-// Note: This has an additional `std::is_enum<EnumT>` requirement to be SFINAE
-// friendly prior to C++20.
-//
-// Reference: https://en.cppreference.com/w/cpp/utility/to_underlying
-template <typename EnumT, typename = std::enable_if_t<std::is_enum<EnumT>{}>>
-constexpr std::underlying_type_t<EnumT> to_underlying(EnumT e) noexcept {
-  return static_cast<std::underlying_type_t<EnumT>>(e);
-}
 
 // Returns a const reference to the underlying container of a container adapter.
 // Works for std::priority_queue, std::queue, and std::stack.
@@ -58,14 +46,6 @@ void STLClearObject(T* obj) {
   // Sometimes "T tmp" allocates objects with memory (arena implementation?).
   // Hence using additional reserve(0) even if it doesn't always work.
   obj->reserve(0);
-}
-
-// Counts the number of instances of val in a container.
-template <typename Container, typename T>
-typename std::iterator_traits<
-    typename Container::const_iterator>::difference_type
-STLCount(const Container& container, const T& val) {
-  return std::count(container.begin(), container.end(), val);
 }
 
 // O(1) implementation of const casting an iterator for any sequence,
@@ -174,25 +154,6 @@ class IsNotIn {
   typename Collection::const_iterator i_;
   const typename Collection::const_iterator end_;
 };
-
-// Helper for returning the optional value's address, or nullptr.
-template <class T>
-T* OptionalOrNullptr(absl::optional<T>& optional) {
-  return optional.has_value() ? &optional.value() : nullptr;
-}
-
-template <class T>
-const T* OptionalOrNullptr(const absl::optional<T>& optional) {
-  return optional.has_value() ? &optional.value() : nullptr;
-}
-
-// Helper for creating an optional<T> from a potentially nullptr T*.
-template <class T>
-absl::optional<T> OptionalFromPtr(const T* value) {
-  if (value)
-    return absl::optional<T>(*value);
-  return absl::nullopt;
-}
 
 }  // namespace base
 

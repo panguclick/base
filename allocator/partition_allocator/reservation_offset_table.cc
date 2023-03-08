@@ -1,4 +1,4 @@
-// Copyright (c) 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,8 @@
 namespace partition_alloc::internal {
 
 #if defined(PA_HAS_64_BITS_POINTERS)
-ReservationOffsetTable::_ReservationOffsetTable
-    ReservationOffsetTable::reservation_offset_tables_[];
+ReservationOffsetTable::_PaddedReservationOffsetTables
+    ReservationOffsetTable::padded_reservation_offset_tables_ PA_PKEY_ALIGN;
 #else
 ReservationOffsetTable::_ReservationOffsetTable
     ReservationOffsetTable::reservation_offset_table_;

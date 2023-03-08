@@ -29,6 +29,7 @@
 #include <openssl/bn.h>
 #include <openssl/cipher.h>
 #include <openssl/cmac.h>
+#include <openssl/ctrdrbg.h>
 #include <openssl/dh.h>
 #include <openssl/digest.h>
 #include <openssl/ec.h>
@@ -297,10 +298,10 @@ static bool GetConfig(const Span<const uint8_t> args[], ReplyCallback write_repl
         "direction": ["encrypt", "decrypt"],
         "keyLen": [128, 192, 256],
         "payloadLen": [{
-          "min": 0, "max": 256, "increment": 8
+          "min": 0, "max": 65536, "increment": 8
         }],
         "aadLen": [{
-          "min": 0, "max": 320, "increment": 8
+          "min": 0, "max": 65536, "increment": 8
         }],
         "tagLen": [32, 64, 96, 104, 112, 120, 128],
         "ivLen": [96],
@@ -312,10 +313,10 @@ static bool GetConfig(const Span<const uint8_t> args[], ReplyCallback write_repl
         "direction": ["encrypt", "decrypt"],
         "keyLen": [128, 192, 256],
         "payloadLen": [{
-          "min": 0, "max": 256, "increment": 8
+          "min": 0, "max": 65536, "increment": 8
         }],
         "aadLen": [{
-          "min": 0, "max": 320, "increment": 8
+          "min": 0, "max": 65536, "increment": 8
         }],
         "tagLen": [32, 64, 96, 104, 112, 120, 128],
         "ivLen": [96],
@@ -334,7 +335,7 @@ static bool GetConfig(const Span<const uint8_t> args[], ReplyCallback write_repl
         "keyLen": [
             128, 192, 256
         ],
-        "payloadLen": [{"min": 128, "max": 1024, "increment": 64}]
+        "payloadLen": [{"min": 128, "max": 4096, "increment": 64}]
       },
       {
         "algorithm": "ACVP-AES-KWP",
@@ -363,14 +364,14 @@ static bool GetConfig(const Span<const uint8_t> args[], ReplyCallback write_repl
         ],
         "payloadLen": [{"min": 0, "max": 256, "increment": 8}],
         "ivLen": [104],
-        "tagLen": [32],
-        "aadLen": [{"min": 0, "max": 1024, "increment": 8}]
+        "tagLen": [32, 64],
+        "aadLen": [{"min": 0, "max": 524288, "increment": 8}]
       },
       {
         "algorithm": "HMAC-SHA-1",
         "revision": "1.0",
         "keyLen": [{
-          "min": 8, "max": 2048, "increment": 8
+          "min": 8, "max": 524288, "increment": 8
         }],
         "macLen": [{
           "min": 32, "max": 160, "increment": 8
@@ -380,7 +381,7 @@ static bool GetConfig(const Span<const uint8_t> args[], ReplyCallback write_repl
         "algorithm": "HMAC-SHA2-224",
         "revision": "1.0",
         "keyLen": [{
-          "min": 8, "max": 2048, "increment": 8
+          "min": 8, "max": 524288, "increment": 8
         }],
         "macLen": [{
           "min": 32, "max": 224, "increment": 8
@@ -390,7 +391,7 @@ static bool GetConfig(const Span<const uint8_t> args[], ReplyCallback write_repl
         "algorithm": "HMAC-SHA2-256",
         "revision": "1.0",
         "keyLen": [{
-          "min": 8, "max": 2048, "increment": 8
+          "min": 8, "max": 524288, "increment": 8
         }],
         "macLen": [{
           "min": 32, "max": 256, "increment": 8
@@ -400,7 +401,7 @@ static bool GetConfig(const Span<const uint8_t> args[], ReplyCallback write_repl
         "algorithm": "HMAC-SHA2-384",
         "revision": "1.0",
         "keyLen": [{
-          "min": 8, "max": 2048, "increment": 8
+          "min": 8, "max": 524288, "increment": 8
         }],
         "macLen": [{
           "min": 32, "max": 384, "increment": 8
@@ -410,7 +411,7 @@ static bool GetConfig(const Span<const uint8_t> args[], ReplyCallback write_repl
         "algorithm": "HMAC-SHA2-512",
         "revision": "1.0",
         "keyLen": [{
-          "min": 8, "max": 2048, "increment": 8
+          "min": 8, "max": 524288, "increment": 8
         }],
         "macLen": [{
           "min": 32, "max": 512, "increment": 8
@@ -420,7 +421,7 @@ static bool GetConfig(const Span<const uint8_t> args[], ReplyCallback write_repl
         "algorithm": "HMAC-SHA2-512/256",
         "revision": "1.0",
         "keyLen": [{
-          "min": 8, "max": 2048, "increment": 8
+          "min": 8, "max": 524288, "increment": 8
         }],
         "macLen": [{
           "min": 32, "max": 256, "increment": 8
@@ -821,12 +822,12 @@ static bool GetConfig(const Span<const uint8_t> args[], ReplyCallback write_repl
           "direction": ["gen", "ver"],
           "msgLen": [{
             "min": 0,
-            "max": 65536,
+            "max": 524288,
             "increment": 8
           }],
           "keyLen": [128, 256],
           "macLen": [{
-            "min": 32,
+            "min": 8,
             "max": 128,
             "increment": 8
           }]
@@ -1096,10 +1097,21 @@ static bool AESCCMSetup(EVP_AEAD_CTX *ctx, Span<const uint8_t> tag_len_span,
     return false;
   }
   memcpy(&tag_len_32, tag_len_span.data(), sizeof(tag_len_32));
-  if (tag_len_32 != 4) {
-    LOG_ERROR("AES-CCM only supports 4-byte tags, but %u was requested\n",
-              static_cast<unsigned>(tag_len_32));
-    return false;
+  const EVP_AEAD *aead;
+  switch (tag_len_32) {
+    case 4:
+      aead = EVP_aead_aes_128_ccm_bluetooth();
+      break;
+
+    case 8:
+      aead = EVP_aead_aes_128_ccm_bluetooth_8();
+      break;
+
+    default:
+      LOG_ERROR(
+          "AES-CCM only supports 4- and 8-byte tags, but %u was requested\n",
+          static_cast<unsigned>(tag_len_32));
+      return false;
   }
 
   if (key.size() != 16) {
@@ -1108,8 +1120,8 @@ static bool AESCCMSetup(EVP_AEAD_CTX *ctx, Span<const uint8_t> tag_len_span,
     return false;
   }
 
-  if (!EVP_AEAD_CTX_init(ctx, EVP_aead_aes_128_ccm_bluetooth(), key.data(),
-                         key.size(), tag_len_32, nullptr)) {
+  if (!EVP_AEAD_CTX_init(ctx, aead, key.data(), key.size(), tag_len_32,
+                         nullptr)) {
     LOG_ERROR("Failed to setup AES-CCM with tag length %u\n",
               static_cast<unsigned>(tag_len_32));
     return false;
@@ -1546,12 +1558,8 @@ static bool ECDSAKeyVer(const Span<const uint8_t> args[], ReplyCallback write_re
   bssl::UniquePtr<BIGNUM> x(BytesToBIGNUM(args[1]));
   bssl::UniquePtr<BIGNUM> y(BytesToBIGNUM(args[2]));
 
-  bssl::UniquePtr<EC_POINT> point(EC_POINT_new(EC_KEY_get0_group(key.get())));
   uint8_t reply[1];
-  if (!EC_POINT_set_affine_coordinates_GFp(EC_KEY_get0_group(key.get()),
-                                           point.get(), x.get(), y.get(),
-                                           /*ctx=*/nullptr) ||
-      !EC_KEY_set_public_key(key.get(), point.get()) ||
+  if (!EC_KEY_set_public_key_affine_coordinates(key.get(), x.get(), y.get()) ||
       !EC_KEY_check_fips(key.get())) {
     reply[0] = 0;
   } else {
@@ -1624,12 +1632,8 @@ static bool ECDSASigVer(const Span<const uint8_t> args[], ReplyCallback write_re
     return false;
   }
 
-  bssl::UniquePtr<EC_POINT> point(EC_POINT_new(EC_KEY_get0_group(key.get())));
   uint8_t reply[1];
-  if (!EC_POINT_set_affine_coordinates_GFp(EC_KEY_get0_group(key.get()),
-                                           point.get(), x.get(), y.get(),
-                                           /*ctx=*/nullptr) ||
-      !EC_KEY_set_public_key(key.get(), point.get()) ||
+  if (!EC_KEY_set_public_key_affine_coordinates(key.get(), x.get(), y.get()) ||
       !EC_KEY_check_fips(key.get()) ||
       !ECDSA_do_verify(digest, digest_len, &sig, key.get())) {
     reply[0] = 0;

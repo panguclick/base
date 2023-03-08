@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,21 +6,20 @@
 
 #include <unordered_map>
 
-#include "base/memory/raw_ptr.h"
-#include "build/build_config.h"
-
-#if BUILDFLAG(IS_WIN)
-#include <windows.h>
-#include <shellapi.h>
-#include <shlobj.h>
-#endif
-
 #include "base/check_op.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
+#include "base/memory/raw_ptr.h"
 #include "base/synchronization/lock.h"
 #include "build/build_config.h"
+
+#if BUILDFLAG(IS_WIN)
+#include <windows.h>
+
+#include <shellapi.h>
+#include <shlobj.h>
+#endif
 
 namespace base {
 

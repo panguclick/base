@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 #define BASE_ALLOCATOR_PARTITION_ALLOCATOR_EXTENDED_API_H_
 
 #include "base/allocator/partition_allocator/partition_root.h"
+#include "base/allocator/partition_allocator/partition_stats.h"
 #include "base/allocator/partition_allocator/thread_cache.h"
 
 namespace partition_alloc::internal {
@@ -18,6 +19,10 @@ void SwapOutProcessThreadCacheForTesting(ThreadSafePartitionRoot* root);
 // Disables the current thread cache, and replaces it with the default for the
 // process.
 void SwapInProcessThreadCacheForTesting(ThreadSafePartitionRoot* root);
+
+// Get allocation stats for the thread cache partition on the current
+// thread. See the documentation of ThreadAllocStats for details.
+ThreadAllocStats GetAllocStatsForCurrentThread();
 
 }  // namespace partition_alloc::internal
 

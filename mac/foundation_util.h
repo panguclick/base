@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -20,7 +20,6 @@
 @class NSFont;
 @class UIFont;
 #else  // __OBJC__
-#include <CoreFoundation/CoreFoundation.h>
 class NSBundle;
 class NSFont;
 class NSString;
@@ -42,6 +41,7 @@ enum NSSearchPathDirectory : unsigned int;
 typedef unsigned int NSSearchPathDomainMask;
 #endif
 
+typedef struct CF_BRIDGED_TYPE(id) __SecAccessControl* SecAccessControlRef;
 typedef struct CF_BRIDGED_TYPE(id) __SecCertificate* SecCertificateRef;
 typedef struct CF_BRIDGED_TYPE(id) __SecKey* SecKeyRef;
 typedef struct CF_BRIDGED_TYPE(id) __SecPolicy* SecPolicyRef;
@@ -69,7 +69,7 @@ BASE_EXPORT void ClearAmIBundledCache();
 BASE_EXPORT bool IsBackgroundOnlyProcess();
 
 // Returns the path to a resource within the framework bundle.
-BASE_EXPORT FilePath PathForFrameworkBundleResource(CFStringRef resourceName);
+BASE_EXPORT FilePath PathForFrameworkBundleResource(const char* resource_name);
 
 // Returns the creator code associated with the CFBundleRef at bundle.
 OSType CreatorCodeForCFBundleRef(CFBundleRef bundle);
@@ -132,6 +132,7 @@ TYPE_NAME_FOR_CF_TYPE_DECL(CGColor);
 TYPE_NAME_FOR_CF_TYPE_DECL(CTFont);
 TYPE_NAME_FOR_CF_TYPE_DECL(CTRun);
 
+TYPE_NAME_FOR_CF_TYPE_DECL(SecAccessControl);
 TYPE_NAME_FOR_CF_TYPE_DECL(SecCertificate);
 TYPE_NAME_FOR_CF_TYPE_DECL(SecKey);
 TYPE_NAME_FOR_CF_TYPE_DECL(SecPolicy);
@@ -276,6 +277,7 @@ CF_CAST_DECL(CTFont);
 CF_CAST_DECL(CTFontDescriptor);
 CF_CAST_DECL(CTRun);
 
+CF_CAST_DECL(SecAccessControl);
 CF_CAST_DECL(SecCertificate);
 CF_CAST_DECL(SecKey);
 CF_CAST_DECL(SecPolicy);

@@ -1,4 +1,4 @@
-// Copyright (c) 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -27,9 +27,8 @@
 
 namespace partition_alloc::internal {
 
-::base::internal::PCScan::ClearType NoWriteProtector::SupportedClearType()
-    const {
-  return ::base::internal::PCScan::ClearType::kLazy;
+PCScan::ClearType NoWriteProtector::SupportedClearType() const {
+  return PCScan::ClearType::kLazy;
 }
 
 #if defined(PA_STARSCAN_UFFD_WRITE_PROTECTOR_SUPPORTED)
@@ -58,7 +57,7 @@ void UserFaultFDThread(int uffd) {
 
     // Enter the safepoint. Concurrent faulted writes will wait until safepoint
     // finishes.
-    ::base::internal::PCScan::JoinScanIfNeeded();
+    PCScan::JoinScanIfNeeded();
   }
 }
 }  // namespace
@@ -78,7 +77,7 @@ UserFaultFDWriteProtector::UserFaultFDWriteProtector()
   PA_CHECK(-1 != ioctl(uffd_, UFFDIO_API, &uffdio_api));
   PA_CHECK(UFFD_API == uffdio_api.api);
 
-  // Register the giga-cage to listen uffd events.
+  // Register the regular pool to listen uffd events.
   struct uffdio_register uffdio_register;
   uffdio_register.range.start = PartitionAddressSpace::RegularPoolBase();
   uffdio_register.range.len = kPoolMaxSize;
@@ -121,10 +120,8 @@ void UserFaultFDWriteProtector::UnprotectPages(uintptr_t begin, size_t length) {
     UserFaultFDWPSet(uffd_, begin, length, UserFaultFDWPMode::kUnprotect);
 }
 
-::base::internal::PCScan::ClearType
-UserFaultFDWriteProtector::SupportedClearType() const {
-  return IsSupported() ? ::base::internal::PCScan::ClearType::kEager
-                       : ::base::internal::PCScan::ClearType::kLazy;
+PCScan::ClearType UserFaultFDWriteProtector::SupportedClearType() const {
+  return IsSupported() ? PCScan::ClearType::kEager : PCScan::ClearType::kLazy;
 }
 
 bool UserFaultFDWriteProtector::IsSupported() const {

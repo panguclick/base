@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -172,10 +172,9 @@ class BASE_EXPORT HistogramBase {
   // Whether the histogram has construction arguments as parameters specified.
   // For histograms that don't have the concept of minimum, maximum or
   // bucket_count, this function always returns false.
-  virtual bool HasConstructionArguments(
-      Sample expected_minimum,
-      Sample expected_maximum,
-      uint32_t expected_bucket_count) const = 0;
+  virtual bool HasConstructionArguments(Sample expected_minimum,
+                                        Sample expected_maximum,
+                                        size_t expected_bucket_count) const = 0;
 
   virtual void Add(Sample value) = 0;
 
@@ -216,7 +215,7 @@ class BASE_EXPORT HistogramBase {
 
   // Snapshot the current complete set of sample data.
   // Note that histogram data is stored per-process. The browser process
-  // periodically injests data from subprocesses. As such, the browser
+  // periodically ingests data from subprocesses. As such, the browser
   // process can see histogram data from any process but other processes
   // can only see histogram data recorded in the subprocess.
   // Moreover, the data returned here may not be up to date:
@@ -231,11 +230,42 @@ class BASE_EXPORT HistogramBase {
   // in about:histograms and test code.
   virtual std::unique_ptr<HistogramSamples> SnapshotSamples() const = 0;
 
-  // Calculate the change (delta) in histogram counts since the previous call
-  // to this method. Each successive call will return only those counts
-  // changed since the last call.
+  // Returns a copy of the samples that have not yet been logged. To mark the
+  // returned samples as logged, see MarkSamplesAsLogged().
   //
   // See additional caveats by SnapshotSamples().
+  //
+  // WARNING: This may be called from a background thread by the metrics
+  // collection system. Do not make a call to this unless it was properly vetted
+  // by someone familiar with the system.
+  // TODO(crbug/1052796): Consider gating this behind a PassKey, so that
+  // eventually, only StatisticsRecorder can use this.
+  virtual std::unique_ptr<HistogramSamples> SnapshotUnloggedSamples() const = 0;
+
+  // Marks the passed |samples| as logged. More formally, the |samples| passed
+  // will not appear in the samples returned by a subsequent call to
+  // SnapshotDelta().
+  //
+  // See additional caveats by SnapshotSamples().
+  //
+  // WARNING: This may be called from a background thread by the metrics
+  // collection system. Do not make a call to this unless it was properly vetted
+  // by someone familiar with the system.
+  // TODO(crbug/1052796): Consider gating this behind a PassKey, so that
+  // eventually, only StatisticsRecorder can use this.
+  virtual void MarkSamplesAsLogged(const HistogramSamples& samples) = 0;
+
+  // Calculate the change (delta) in histogram counts since the previous call
+  // to this method. Each successive call will return only those counts changed
+  // since the last call. Calls to MarkSamplesAsLogged() will also affect the
+  // samples returned. Logically, this function is equivalent to a call to
+  // SnapshotUnloggedSamples() followed by a call to MarkSamplesAsLogged().
+  //
+  // See additional caveats by SnapshotSamples().
+  //
+  // WARNING: This may be called from a background thread by the metrics
+  // collection system. Do not make a call to this unless it was properly vetted
+  // by someone familiar with the system.
   virtual std::unique_ptr<HistogramSamples> SnapshotDelta() = 0;
 
   // Calculate the change (delta) in histogram counts since the previous call
@@ -256,7 +286,7 @@ class BASE_EXPORT HistogramBase {
   // with the following format:
   // {"header": "Name of the histogram with samples, mean, and/or flags",
   // "body": "ASCII histogram representation"}
-  virtual base::Value ToGraphDict() const = 0;
+  virtual base::Value::Dict ToGraphDict() const = 0;
 
   // TODO(bcwhite): Remove this after https://crbug/836875.
   virtual void ValidateHistogramContents() const;
@@ -273,9 +303,9 @@ class BASE_EXPORT HistogramBase {
   struct BASE_EXPORT CountAndBucketData {
     Count count;
     int64_t sum;
-    Value buckets;
+    Value::List buckets;
 
-    CountAndBucketData(Count count, int64_t sum, Value buckets);
+    CountAndBucketData(Count count, int64_t sum, Value::List buckets);
     ~CountAndBucketData();
 
     CountAndBucketData(CountAndBucketData&& other);
@@ -286,7 +316,7 @@ class BASE_EXPORT HistogramBase {
   virtual void SerializeInfoImpl(base::Pickle* pickle) const = 0;
 
   // Writes information about the construction parameters in |params|.
-  virtual Value GetParameters() const = 0;
+  virtual Value::Dict GetParameters() const = 0;
 
   // Returns information about the current (non-empty) buckets and their sample
   // counts to |buckets|, the total sample count to |count| and the total sum

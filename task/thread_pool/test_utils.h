@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -116,15 +116,6 @@ class MockJobTask : public base::RefCountedThreadSafe<MockJobTask> {
 
   base::RepeatingCallback<void(JobDelegate*)> worker_task_;
   std::atomic_size_t remaining_num_tasks_to_run_;
-};
-
-// An enumeration of possible thread pool types. Used to parametrize relevant
-// thread_pool tests.
-enum class GroupType {
-  GENERIC,
-#if HAS_NATIVE_THREAD_POOL()
-  NATIVE,
-#endif
 };
 
 // Creates a Sequence with given |traits| and pushes |task| to it. If a

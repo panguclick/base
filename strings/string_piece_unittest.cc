@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -718,6 +718,11 @@ TEST(StringPieceTest, OutOfBoundsDeath) {
     StringPiece piece;
     ASSERT_DEATH_IF_SUPPORTED(piece.substr(1), "");
   }
+}
+
+TEST(StringPieceTest, InvalidLengthDeath) {
+  int length = -1;
+  ASSERT_DEATH_IF_SUPPORTED({ StringPiece piece("hello", length); }, "");
 }
 
 TEST(StringPieceTest, ConstexprData) {

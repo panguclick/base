@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,7 +12,6 @@
 #include "base/observer_list.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_local.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/base_tracing.h"
 #include "build/build_config.h"
 
@@ -96,7 +95,7 @@ void RunLoop::RegisterDelegateForCurrentThread(Delegate* delegate) {
 RunLoop::RunLoop(Type type)
     : delegate_(GetTlsDelegate().Get()),
       type_(type),
-      origin_task_runner_(ThreadTaskRunnerHandle::Get()) {
+      origin_task_runner_(SingleThreadTaskRunner::GetCurrentDefault()) {
   DCHECK(delegate_) << "A RunLoop::Delegate must be bound to this thread prior "
                        "to using RunLoop.";
   DCHECK(origin_task_runner_);

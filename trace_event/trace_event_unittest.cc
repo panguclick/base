@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -37,14 +37,15 @@
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread.h"
 #include "base/time/time.h"
-#include "base/trace_event/event_name_filter.h"
 #include "base/trace_event/trace_buffer.h"
-#include "base/trace_event/trace_event_filter.h"
-#include "base/trace_event/trace_event_filter_test_utils.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+#if BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
+#include "third_party/perfetto/protos/perfetto/config/chrome/chrome_config.gen.h"  // nogncheck
+#endif
 
 namespace base {
 namespace trace_event {
@@ -62,7 +63,6 @@ struct JsonKeyValue {
   CompareOp op;
 };
 
-const int kThreadId = 42;
 const int kAsyncId = 5;
 const char kAsyncIdStr[] = "0x5";
 const int kAsyncId2 = 6;
@@ -154,8 +154,7 @@ class TraceEventTestFixture : public testing::Test {
   }
 
   void EndTraceAndFlushAsync(WaitableEvent* flush_complete_event) {
-    TraceLog::GetInstance()->SetDisabled(TraceLog::RECORDING_MODE |
-                                         TraceLog::FILTERING_MODE);
+    TraceLog::GetInstance()->SetDisabled(TraceLog::RECORDING_MODE);
     TraceLog::GetInstance()->Flush(base::BindRepeating(
         &TraceEventTestFixture::OnTraceDataCollected,
         base::Unretained(static_cast<TraceEventTestFixture*>(this)),
@@ -217,14 +216,13 @@ void TraceEventTestFixture::OnTraceDataCollected(
   }
 
   ASSERT_TRUE(root->is_list());
-  Value::ListStorage root_storage = std::move(*root).TakeListDeprecated();
+  Value::List& root_list = root->GetList();
 
   // Move items into our aggregate collection
-  Value::ListStorage storage = std::move(trace_parsed_).TakeListDeprecated();
-  storage.reserve(storage.size() + root_storage.size());
-  std::move(root_storage.begin(), root_storage.end(),
-            std::back_inserter(storage));
-  trace_parsed_ = Value(std::move(storage));
+  Value::List& trace_parsed_list = trace_parsed_.GetList();
+  trace_parsed_list.reserve(trace_parsed_list.size() + root_list.size());
+  for (auto& value : root_list)
+    trace_parsed_list.Append(std::move(value));
 
   if (!has_more_events)
     flush_complete_event->Signal();
@@ -238,8 +236,6 @@ static bool CompareJsonValues(const std::string& lhs,
       return lhs == rhs;
     case IS_NOT_EQUAL:
       return lhs != rhs;
-    default:
-      CHECK(0);
   }
   return false;
 }
@@ -272,7 +268,7 @@ static bool IsAllKeyValueInDict(const JsonKeyValue* key_values,
 const Value* TraceEventTestFixture::FindMatchingTraceEntry(
     const JsonKeyValue* key_values) {
   // Scan all items
-  for (const Value& value : trace_parsed_.GetListDeprecated()) {
+  for (const Value& value : trace_parsed_.GetList()) {
     if (!value.is_dict())
       continue;
 
@@ -283,14 +279,12 @@ const Value* TraceEventTestFixture::FindMatchingTraceEntry(
 }
 
 void TraceEventTestFixture::DropTracedMetadataRecords() {
-  Value::ListStorage storage = std::move(trace_parsed_).TakeListDeprecated();
-  base::EraseIf(storage, [](const Value& value) {
+  trace_parsed_.GetList().EraseIf([](const Value& value) {
     if (!value.is_dict())
       return false;
-    const std::string* ph = value.FindStringKey("ph");
+    const std::string* ph = value.GetDict().FindString("ph");
     return ph && *ph == "M";
   });
-  trace_parsed_ = Value(std::move(storage));
 }
 
 const Value* TraceEventTestFixture::FindNamePhase(const char* name,
@@ -350,7 +344,7 @@ const Value* FindTraceEntry(const Value& trace_parsed,
                             const char* string_to_match,
                             const Value* match_after_this_item = nullptr) {
   // Scan all items
-  for (const Value& value : trace_parsed.GetListDeprecated()) {
+  for (const Value& value : trace_parsed.GetList()) {
     if (match_after_this_item) {
       if (&value == match_after_this_item)
         match_after_this_item = nullptr;
@@ -365,10 +359,11 @@ const Value* FindTraceEntry(const Value& trace_parsed,
   return nullptr;
 }
 
+#if !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
 std::vector<const Value*> FindTraceEntries(const Value& trace_parsed,
                                            const char* string_to_match) {
   std::vector<const Value*> hits;
-  for (const Value& value : trace_parsed.GetListDeprecated()) {
+  for (const Value& value : trace_parsed.GetList()) {
     if (!value.is_dict())
       continue;
 
@@ -377,6 +372,7 @@ std::vector<const Value*> FindTraceEntries(const Value& trace_parsed,
   }
   return hits;
 }
+#endif  // !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
 
 constexpr const char kControlCharacters[] = "test_\001\002\003\n\r";
 
@@ -440,26 +436,12 @@ void TraceWithAllMacroVariants(WaitableEvent* task_complete_event) {
     TRACE_COUNTER_ID2("test_all", "TRACE_COUNTER_ID2 call", 0x319009, "a",
                       30000, "b", 1415);
 
-    TRACE_EVENT_COPY_BEGIN_WITH_ID_TID_AND_TIMESTAMP0(
-        "test_all", "TRACE_EVENT_COPY_BEGIN_WITH_ID_TID_AND_TIMESTAMP0 call",
-        kAsyncId, kThreadId, TimeTicks::FromInternalValue(12345));
-    TRACE_EVENT_COPY_END_WITH_ID_TID_AND_TIMESTAMP0(
-        "test_all", "TRACE_EVENT_COPY_BEGIN_WITH_ID_TID_AND_TIMESTAMP0 call",
-        kAsyncId, kThreadId, TimeTicks::FromInternalValue(23456));
-
-    TRACE_EVENT_BEGIN_WITH_ID_TID_AND_TIMESTAMP0(
-        "test_all", "TRACE_EVENT_BEGIN_WITH_ID_TID_AND_TIMESTAMP0 call",
-        kAsyncId2, kThreadId, TimeTicks::FromInternalValue(34567));
     TRACE_EVENT_ASYNC_STEP_PAST0("test_all",
                                  "TRACE_EVENT_ASYNC_STEP_PAST0 call", kAsyncId2,
                                  "step_end1");
     TRACE_EVENT_ASYNC_STEP_PAST1("test_all",
                                  "TRACE_EVENT_ASYNC_STEP_PAST1 call", kAsyncId2,
                                  "step_end2", "name1", "value1");
-
-    TRACE_EVENT_END_WITH_ID_TID_AND_TIMESTAMP0(
-        "test_all", "TRACE_EVENT_END_WITH_ID_TID_AND_TIMESTAMP0 call",
-        kAsyncId2, kThreadId, TimeTicks::FromInternalValue(45678));
 
     TRACE_EVENT_OBJECT_CREATED_WITH_ID("test_all", "tracked object 1", 0x42);
     TRACE_EVENT_OBJECT_SNAPSHOT_WITH_ID("test_all", "tracked object 1", 0x42,
@@ -480,13 +462,6 @@ void TraceWithAllMacroVariants(WaitableEvent* task_complete_event) {
 
     TRACE_EVENT1(kControlCharacters, kControlCharacters,
                  kControlCharacters, kControlCharacters);
-
-    uint64_t context_id = 0x20151021;
-
-    TRACE_EVENT_ENTER_CONTEXT("test_all", "TRACE_EVENT_ENTER_CONTEXT call",
-                              TRACE_ID_WITH_SCOPE("scope", context_id));
-    TRACE_EVENT_LEAVE_CONTEXT("test_all", "TRACE_EVENT_LEAVE_CONTEXT call",
-                              TRACE_ID_WITH_SCOPE("scope", context_id));
 
     TRACE_EVENT_ASYNC_BEGIN0("test_all", "async default process scope", 0x1000);
     TRACE_EVENT_ASYNC_BEGIN0("test_all", "async local id",
@@ -656,24 +631,6 @@ void ValidateAllTraceMacrosCreatedData(const Value& trace_parsed) {
     EXPECT_EQ(*item->FindIntPath("args.b"), 1415);
   }
 
-  EXPECT_FIND_("TRACE_EVENT_COPY_BEGIN_WITH_ID_TID_AND_TIMESTAMP0 call");
-  {
-    EXPECT_EQ(*item->FindIntKey("ts"), 12345);
-
-    EXPECT_EQ(*item->FindIntKey("tid"), kThreadId);
-
-    EXPECT_EQ(*item->FindStringKey("id"), kAsyncIdStr);
-  }
-
-  EXPECT_FIND_("TRACE_EVENT_BEGIN_WITH_ID_TID_AND_TIMESTAMP0 call");
-  {
-    EXPECT_EQ(*item->FindIntKey("ts"), 34567);
-
-    EXPECT_EQ(*item->FindIntKey("tid"), kThreadId);
-
-    EXPECT_EQ(*item->FindStringKey("id"), kAsyncId2Str);
-  }
-
   EXPECT_FIND_("TRACE_EVENT_ASYNC_STEP_PAST0 call");
   {
     EXPECT_SUB_FIND_("id");
@@ -686,18 +643,6 @@ void ValidateAllTraceMacrosCreatedData(const Value& trace_parsed) {
     EXPECT_SUB_FIND_("name1");
     EXPECT_SUB_FIND_("value1");
   }
-
-  // Perfetto doesn't have separate begin and end events.
-#if !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
-  EXPECT_FIND_("TRACE_EVENT_END_WITH_ID_TID_AND_TIMESTAMP0 call");
-  {
-    EXPECT_EQ(*item->FindIntKey("ts"), 45678);
-
-    EXPECT_EQ(*item->FindIntKey("tid"), kThreadId);
-
-    EXPECT_EQ(*item->FindStringKey("id"), kAsyncId2Str);
-  }
-#endif
 
   EXPECT_FIND_("tracked object 1");
   {
@@ -763,27 +708,6 @@ void ValidateAllTraceMacrosCreatedData(const Value& trace_parsed) {
 
   EXPECT_FIND_(kControlCharacters);
   EXPECT_SUB_FIND_(kControlCharacters);
-  {
-#if BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
-    auto* id_hash = "0xbbd2598e28c3b487";
-#else
-    auto* id_hash = "0x20151021";
-#endif
-    EXPECT_FIND_("TRACE_EVENT_ENTER_CONTEXT call");
-    {
-      EXPECT_EQ(*item->FindStringKey("ph"), "(");
-      EXPECT_EQ(*item->FindStringKey("scope"), "scope");
-      EXPECT_EQ(*item->FindStringKey("id"), id_hash);
-    }
-
-    EXPECT_FIND_("TRACE_EVENT_LEAVE_CONTEXT call");
-    {
-      EXPECT_EQ(*item->FindStringKey("ph"), ")");
-
-      EXPECT_EQ(*item->FindStringKey("scope"), "scope");
-      EXPECT_EQ(*item->FindStringKey("id"), id_hash);
-    }
-  }
 
   EXPECT_FIND_("async default process scope");
   {
@@ -849,7 +773,7 @@ void ValidateInstantEventPresentOnEveryThread(const Value& trace_parsed,
                                               int num_events) {
   std::map<int, std::map<int, bool>> results;
 
-  for (const Value& value : trace_parsed.GetListDeprecated()) {
+  for (const Value& value : trace_parsed.GetList()) {
     if (!value.is_dict())
       continue;
 
@@ -907,7 +831,7 @@ TEST_F(TraceEventTestFixture, DataDiscarded) {
 
   CancelTrace();
 
-  EXPECT_TRUE(trace_parsed_.GetListDeprecated().empty());
+  EXPECT_TRUE(trace_parsed_.GetList().empty());
 }
 
 class MockEnabledStateChangedObserver :
@@ -1022,13 +946,7 @@ class AfterStateChangeEnabledStateObserver
   }
 
   void OnTraceLogDisabled() override {
-    // Perfetto intentionally notifies observers before tracing is disabled so
-    // that final trace events may still be written.
-#if BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
-    EXPECT_TRUE(TraceLog::GetInstance()->IsEnabled());
-#else
     EXPECT_FALSE(TraceLog::GetInstance()->IsEnabled());
-#endif
   }
 };
 
@@ -1207,7 +1125,7 @@ TEST_F(TraceEventTestFixture, Categories) {
   TRACE_EVENT_INSTANT0("cat2", "name", TRACE_EVENT_SCOPE_THREAD);
   EndTraceAndFlush();
   DropTracedMetadataRecords();
-  EXPECT_TRUE(trace_parsed_.GetListDeprecated().empty());
+  EXPECT_TRUE(trace_parsed_.GetList().empty());
 
   // Include existent category -> only events of that category
   Clear();
@@ -1401,26 +1319,13 @@ TEST_F(TraceEventTestFixture, StaticStringVsString) {
             TRACE_EVENT_PHASE_INSTANT, category_group_enabled, "name1",
             trace_event_internal::kGlobalScope, trace_event_internal::kNoId, 0,
             trace_event_internal::kNoId, "arg1", "argval", "arg2", "argval");
-    // Test that static TRACE_STR_COPY NULL string arguments are not copied.
-    const char* str1 = nullptr;
-    const char* str2 = nullptr;
-    [[maybe_unused]] TraceEventHandle handle2 =
-        trace_event_internal::AddTraceEvent(
-            TRACE_EVENT_PHASE_INSTANT, category_group_enabled, "name2",
-            trace_event_internal::kGlobalScope, trace_event_internal::kNoId, 0,
-            trace_event_internal::kNoId, "arg1", TRACE_STR_COPY(str1), "arg2",
-            TRACE_STR_COPY(str2));
 #if !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
     EXPECT_GT(tracer->GetStatus().event_count, 1u);
     const TraceEvent* event1 = tracer->GetEventByHandle(handle1);
-    const TraceEvent* event2 = tracer->GetEventByHandle(handle2);
     ASSERT_TRUE(event1);
-    ASSERT_TRUE(event2);
     EXPECT_STREQ("name1", event1->name());
-    EXPECT_STREQ("name2", event2->name());
     EXPECT_TRUE(event1->parameter_copy_storage().empty());
-    EXPECT_TRUE(event2->parameter_copy_storage().empty());
-#endif  // !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
+#endif
     EndTraceAndFlush();
   }
 }
@@ -1486,7 +1391,12 @@ TEST_F(TraceEventTestFixture, DataCapturedManyThreads) {
   }
 }
 
-// Test that thread and process names show up in the trace
+// Test that thread and process names show up in the trace.
+// In SDK build, thread names are not tracked inside //base. Instead, there's
+// a special TrackNameRecorder component in //services that is tested in
+// services_unittests.
+// TODO(khokhlov): Verify if we need thread name support for unit-test tracing.
+#if !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
 TEST_F(TraceEventTestFixture, ThreadNames) {
   // Create threads before we enable tracing to make sure
   // that tracelog still captures them.
@@ -1554,6 +1464,7 @@ TEST_F(TraceEventTestFixture, ThreadNames) {
     }
   }
 }
+#endif  // !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
 
 // Test that the disabled trace categories are included/excluded from the
 // trace output correctly.
@@ -1627,48 +1538,35 @@ TEST_F(TraceEventTestFixture, NormallyNoDeepCopy) {
 #endif  // !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
 
 TEST_F(TraceEventTestFixture, DeepCopy) {
-  static const char kOriginalName1[] = "name1";
-  static const char kOriginalName2[] = "name2";
-  static const char kOriginalName3[] = "name3";
-  std::string name1(kOriginalName1);
-  std::string name2(kOriginalName2);
-  std::string name3(kOriginalName3);
+  static const char kOriginalName[] = "name1";
+  std::string name(kOriginalName);
   std::string arg1("arg1");
   std::string arg2("arg2");
-  std::string val1("val1");
-  std::string val2("val2");
+  std::string val("val");
 
   BeginTrace();
-  TRACE_EVENT_INSTANT_WITH_FLAGS0(
-      "category", name1.c_str(),
-      TRACE_EVENT_FLAG_COPY | TRACE_EVENT_SCOPE_THREAD);
-  TRACE_EVENT_BEGIN_WITH_FLAGS1("category", name2.c_str(),
-                                TRACE_EVENT_FLAG_COPY, arg1.c_str(), 5);
-  TRACE_EVENT_END_WITH_FLAGS0("category", name2.c_str(), TRACE_EVENT_FLAG_COPY);
-  TRACE_EVENT_COPY_BEGIN2("category", name3.c_str(), arg1.c_str(), val1,
-                          arg2.c_str(), val2);
+  TRACE_EVENT_COPY_BEGIN2("category", name.c_str(), arg1.c_str(), 5,
+                          arg2.c_str(), val);
+  TRACE_EVENT_COPY_BEGIN2("category", name.c_str(), arg1.c_str(), 5,
+                          arg2.c_str(), val);
 
   // As per NormallyNoDeepCopy, modify the strings in place.
-  name1[0] = name2[0] = name3[0] = arg1[0] = arg2[0] = val1[0] = val2[0] = '@';
+  name[0] = arg1[0] = arg2[0] = val[0] = '@';
 
   EndTraceAndFlush();
 
-  EXPECT_FALSE(FindTraceEntry(trace_parsed_, name1.c_str()));
-  EXPECT_FALSE(FindTraceEntry(trace_parsed_, name2.c_str()));
-  EXPECT_FALSE(FindTraceEntry(trace_parsed_, name3.c_str()));
+  EXPECT_FALSE(FindTraceEntry(trace_parsed_, name.c_str()));
 
-  const Value* entry1 = FindTraceEntry(trace_parsed_, kOriginalName1);
-  const Value* entry2 = FindTraceEntry(trace_parsed_, kOriginalName2);
-  const Value* entry3 = FindTraceEntry(trace_parsed_, kOriginalName3);
-  ASSERT_TRUE(entry1);
-  ASSERT_TRUE(entry2);
-  ASSERT_TRUE(entry3);
+  const Value* entry = FindTraceEntry(trace_parsed_, kOriginalName);
+  ASSERT_TRUE(entry);
 
-  EXPECT_FALSE(entry2->FindIntPath("args.@rg1"));
-  EXPECT_EQ(*entry2->FindIntPath("args.arg1"), 5);
+  EXPECT_FALSE(entry->FindIntPath("args.@rg1"));
 
-  EXPECT_EQ(*entry3->FindStringPath("args.arg1"), "val1");
-  EXPECT_EQ(*entry3->FindStringPath("args.arg2"), "val2");
+  ASSERT_TRUE(entry->FindIntPath("args.arg1"));
+  EXPECT_EQ(*entry->FindIntPath("args.arg1"), 5);
+
+  ASSERT_TRUE(entry->FindStringPath("args.arg2"));
+  EXPECT_EQ(*entry->FindStringPath("args.arg2"), "val");
 }
 
 // Test that TraceResultBuffer outputs the correct result whether it is added
@@ -1803,13 +1701,7 @@ TEST_F(TraceEventTestFixture, TraceWithDefaultCategoryFilters) {
   trace_log->SetDisabled();
 }
 
-// Flaky on iOS device, see crbug.com/908002
-#if BUILDFLAG(IS_IOS) && !(TARGET_OS_SIMULATOR)
-#define MAYBE_TraceWithDisabledByDefaultCategoryFilters DISABLED_TraceWithDisabledByDefaultCategoryFilters
-#else
-#define MAYBE_TraceWithDisabledByDefaultCategoryFilters TraceWithDisabledByDefaultCategoryFilters
-#endif  // BUILDFLAG(IS_IOS) && !(TARGET_OS_SIMULATOR)
-TEST_F(TraceEventTestFixture, MAYBE_TraceWithDisabledByDefaultCategoryFilters) {
+TEST_F(TraceEventTestFixture, TraceWithDisabledByDefaultCategoryFilters) {
   TraceLog* trace_log = TraceLog::GetInstance();
 
   trace_log->SetEnabled(TraceConfig("foo,disabled-by-default-foo", ""),
@@ -2187,8 +2079,8 @@ TEST_F(TraceEventTestFixture, TraceBufferVectorReportFull) {
   // Test that buffer_limit_reached_timestamp's value is between the timestamp
   // of the last trace event and current time.
   DropTracedMetadataRecords();
-  ASSERT_TRUE(!trace_parsed_.GetListDeprecated().empty());
-  const Value& last_trace_event = trace_parsed_.GetListDeprecated().back();
+  ASSERT_TRUE(!trace_parsed_.GetList().empty());
+  const Value& last_trace_event = trace_parsed_.GetList().back();
   EXPECT_TRUE(last_trace_event.is_dict());
   absl::optional<double> maybe_last_trace_event_timestamp =
       last_trace_event.FindDoubleKey("ts");
@@ -2482,13 +2374,7 @@ bool MockLogMessageHandler(int, const char*, int, size_t,
   return false;
 }
 
-// Flaky on iOS device, see crbug.com/908002
-#if BUILDFLAG(IS_IOS) && !(TARGET_OS_SIMULATOR)
-#define MAYBE_EchoToConsole DISABLED_EchoToConsole
-#else
-#define MAYBE_EchoToConsole EchoToConsole
-#endif  // BUILDFLAG(IS_IOS) && !(TARGET_OS_SIMULATOR)
-TEST_F(TraceEventTestFixture, MAYBE_EchoToConsole) {
+TEST_F(TraceEventTestFixture, EchoToConsole) {
   logging::LogMessageHandlerFunction old_log_message_handler =
       logging::GetLogMessageHandler();
   logging::SetLogMessageHandler(MockLogMessageHandler);
@@ -2569,7 +2455,7 @@ TEST_F(TraceEventTestFixture, TimeOffset) {
   double end_time = static_cast<double>(
       (TimeTicks::Now() - time_offset).ToInternalValue());
   double last_timestamp = 0;
-  for (const Value& item : trace_parsed_.GetListDeprecated()) {
+  for (const Value& item : trace_parsed_.GetList()) {
     EXPECT_TRUE(item.is_dict());
     absl::optional<double> timestamp = item.FindDoubleKey("ts");
     EXPECT_TRUE(timestamp.has_value());
@@ -2577,204 +2463,6 @@ TEST_F(TraceEventTestFixture, TimeOffset) {
     EXPECT_LE(timestamp.value(), end_time);
     last_timestamp = timestamp.value();
   }
-}
-#endif  // !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
-
-// Runtime filtering isn't supported with Perfetto.
-#if !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
-// Flaky on iOS device, see crbug.com/908002
-#if BUILDFLAG(IS_IOS) && !(TARGET_OS_SIMULATOR)
-#define MAYBE_TraceFilteringMode DISABLED_TraceFilteringMode
-#else
-#define MAYBE_TraceFilteringMode TraceFilteringMode
-#endif  // BUILDFLAG(IS_IOS) && !(TARGET_OS_SIMULATOR)
-TEST_F(TraceEventTestFixture, MAYBE_TraceFilteringMode) {
-  const char config_json[] =
-      "{"
-      "  \"event_filters\": ["
-      "     {"
-      "       \"filter_predicate\": \"testing_predicate\", "
-      "       \"included_categories\": [\"*\"]"
-      "     }"
-      "  ]"
-      "}";
-
-  // Run RECORDING_MODE within FILTERING_MODE:
-  TestEventFilter::HitsCounter filter_hits_counter;
-  TestEventFilter::set_filter_return_value(true);
-  TraceLog::GetInstance()->SetFilterFactoryForTesting(TestEventFilter::Factory);
-
-  // Only filtering mode is enabled with test filters.
-  TraceLog::GetInstance()->SetEnabled(TraceConfig(config_json),
-                                      TraceLog::FILTERING_MODE);
-  EXPECT_EQ(TraceLog::FILTERING_MODE, TraceLog::GetInstance()->enabled_modes());
-  {
-    void* ptr = this;
-    TRACE_EVENT0("test_c0", "name0");
-    TRACE_EVENT_ASYNC_BEGIN0("test_c1", "name1", ptr);
-    TRACE_EVENT_INSTANT0("test_c0", "name0", TRACE_EVENT_SCOPE_THREAD);
-    TRACE_EVENT_ASYNC_END0("test_c1", "name1", ptr);
-  }
-
-  // Recording mode is enabled when filtering mode is turned on.
-  TraceLog::GetInstance()->SetEnabled(TraceConfig("", ""),
-                                      TraceLog::RECORDING_MODE);
-  EXPECT_EQ(TraceLog::RECORDING_MODE | TraceLog::FILTERING_MODE,
-            TraceLog::GetInstance()->enabled_modes());
-  { TRACE_EVENT0("test_c2", "name2"); }
-  // Only recording mode is disabled and filtering mode will continue to run.
-  TraceLog::GetInstance()->SetDisabled(TraceLog::RECORDING_MODE);
-  EXPECT_EQ(TraceLog::FILTERING_MODE, TraceLog::GetInstance()->enabled_modes());
-
-  { TRACE_EVENT0("test_c0", "name0"); }
-  // Filtering mode is disabled and no tracing mode should be enabled.
-  TraceLog::GetInstance()->SetDisabled(TraceLog::FILTERING_MODE);
-  EXPECT_EQ(0, TraceLog::GetInstance()->enabled_modes());
-
-  EndTraceAndFlush();
-  EXPECT_FALSE(FindMatchingValue("cat", "test_c0"));
-  EXPECT_FALSE(FindMatchingValue("cat", "test_c1"));
-  EXPECT_FALSE(FindMatchingValue("name", "name0"));
-  EXPECT_FALSE(FindMatchingValue("name", "name1"));
-  EXPECT_TRUE(FindMatchingValue("cat", "test_c2"));
-  EXPECT_TRUE(FindMatchingValue("name", "name2"));
-  EXPECT_EQ(6u, filter_hits_counter.filter_trace_event_hit_count);
-  EXPECT_EQ(3u, filter_hits_counter.end_event_hit_count);
-  Clear();
-  filter_hits_counter.Reset();
-
-  // Run FILTERING_MODE within RECORDING_MODE:
-  // Only recording mode is enabled and all events must be recorded.
-  TraceLog::GetInstance()->SetEnabled(TraceConfig("", ""),
-                                      TraceLog::RECORDING_MODE);
-  EXPECT_EQ(TraceLog::RECORDING_MODE, TraceLog::GetInstance()->enabled_modes());
-  { TRACE_EVENT0("test_c0", "name0"); }
-
-  // Filtering mode is also enabled and all events must be filtered-out.
-  TestEventFilter::set_filter_return_value(false);
-  TraceLog::GetInstance()->SetEnabled(TraceConfig(config_json),
-                                      TraceLog::FILTERING_MODE);
-  EXPECT_EQ(TraceLog::RECORDING_MODE | TraceLog::FILTERING_MODE,
-            TraceLog::GetInstance()->enabled_modes());
-  { TRACE_EVENT0("test_c1", "name1"); }
-  // Only filtering mode is disabled and recording mode should continue to run
-  // with all events being recorded.
-  TraceLog::GetInstance()->SetDisabled(TraceLog::FILTERING_MODE);
-  EXPECT_EQ(TraceLog::RECORDING_MODE, TraceLog::GetInstance()->enabled_modes());
-
-  { TRACE_EVENT0("test_c2", "name2"); }
-  // Recording mode is disabled and no tracing mode should be enabled.
-  TraceLog::GetInstance()->SetDisabled(TraceLog::RECORDING_MODE);
-  EXPECT_EQ(0, TraceLog::GetInstance()->enabled_modes());
-
-  EndTraceAndFlush();
-  EXPECT_TRUE(FindMatchingValue("cat", "test_c0"));
-  EXPECT_TRUE(FindMatchingValue("cat", "test_c2"));
-  EXPECT_TRUE(FindMatchingValue("name", "name0"));
-  EXPECT_TRUE(FindMatchingValue("name", "name2"));
-  EXPECT_FALSE(FindMatchingValue("cat", "test_c1"));
-  EXPECT_FALSE(FindMatchingValue("name", "name1"));
-  EXPECT_EQ(1u, filter_hits_counter.filter_trace_event_hit_count);
-  EXPECT_EQ(1u, filter_hits_counter.end_event_hit_count);
-  Clear();
-}
-
-// Flaky on iOS device, see crbug.com/908002
-#if BUILDFLAG(IS_IOS) && !(TARGET_OS_SIMULATOR)
-#define MAYBE_EventFiltering DISABLED_EventFiltering
-#else
-#define MAYBE_EventFiltering EventFiltering
-#endif  // BUILDFLAG(IS_IOS) && !(TARGET_OS_SIMULATOR)
-TEST_F(TraceEventTestFixture, MAYBE_EventFiltering) {
-  const char config_json[] =
-      "{"
-      "  \"included_categories\": ["
-      "    \"test_filtered_cat\","
-      "    \"test_unfiltered_cat\","
-      "    \"" TRACE_DISABLED_BY_DEFAULT("test_filtered_cat") "\","
-      "    \"" TRACE_DISABLED_BY_DEFAULT("test_unfiltered_cat") "\"],"
-      "  \"event_filters\": ["
-      "     {"
-      "       \"filter_predicate\": \"testing_predicate\", "
-      "       \"included_categories\": ["
-      "         \"test_filtered_cat\","
-      "         \"" TRACE_DISABLED_BY_DEFAULT("test_filtered_cat") "\"]"
-      "     }"
-      "    "
-      "  ]"
-      "}";
-
-  TestEventFilter::HitsCounter filter_hits_counter;
-  TestEventFilter::set_filter_return_value(true);
-  TraceLog::GetInstance()->SetFilterFactoryForTesting(TestEventFilter::Factory);
-
-  TraceConfig trace_config(config_json);
-  TraceLog::GetInstance()->SetEnabled(
-      trace_config, TraceLog::RECORDING_MODE | TraceLog::FILTERING_MODE);
-  ASSERT_TRUE(TraceLog::GetInstance()->IsEnabled());
-
-  TRACE_EVENT0("test_filtered_cat", "a snake");
-  TRACE_EVENT0("test_filtered_cat", "a mushroom");
-  TRACE_EVENT0("test_unfiltered_cat", "a horse");
-
-  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("test_filtered_cat"), "a dog");
-  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("test_unfiltered_cat"), "a pony");
-
-  // This is scoped so we can test the end event being filtered.
-  { TRACE_EVENT0("test_filtered_cat", "another cat whoa"); }
-
-  EndTraceAndFlush();
-
-  EXPECT_EQ(4u, filter_hits_counter.filter_trace_event_hit_count);
-  EXPECT_EQ(1u, filter_hits_counter.end_event_hit_count);
-}
-
-// Flaky on iOS device, see crbug.com/908002
-#if BUILDFLAG(IS_IOS) && !(TARGET_OS_SIMULATOR)
-#define MAYBE_EventAllowlistFiltering DISABLED_EventAllowlistFiltering
-#else
-#define MAYBE_EventAllowlistFiltering EventAllowlistFiltering
-#endif  // BUILDFLAG(IS_IOS) && !(TARGET_OS_SIMULATOR)
-TEST_F(TraceEventTestFixture, MAYBE_EventAllowlistFiltering) {
-  std::string config_json = StringPrintf(
-      "{"
-      "  \"included_categories\": ["
-      "    \"test_filtered_cat\","
-      "    \"test_unfiltered_cat\","
-      "    \"" TRACE_DISABLED_BY_DEFAULT("test_filtered_cat") "\"],"
-      "  \"event_filters\": ["
-      "     {"
-      "       \"filter_predicate\": \"%s\", "
-      "       \"included_categories\": ["
-      "         \"test_filtered_cat\","
-      "         \"" TRACE_DISABLED_BY_DEFAULT("*") "\"], "
-      "       \"filter_args\": {"
-      "           \"event_name_allowlist\": [\"a snake\", \"a dog\"]"
-      "         }"
-      "     }"
-      "    "
-      "  ]"
-      "}",
-      EventNameFilter::kName);
-
-  TraceConfig trace_config(config_json);
-  TraceLog::GetInstance()->SetEnabled(
-      trace_config, TraceLog::RECORDING_MODE | TraceLog::FILTERING_MODE);
-  EXPECT_TRUE(TraceLog::GetInstance()->IsEnabled());
-
-  TRACE_EVENT0("test_filtered_cat", "a snake");
-  TRACE_EVENT0("test_filtered_cat", "a mushroom");
-  TRACE_EVENT0("test_unfiltered_cat", "a cat");
-  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("test_filtered_cat"), "a dog");
-  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("test_filtered_cat"), "a pony");
-
-  EndTraceAndFlush();
-
-  EXPECT_TRUE(FindMatchingValue("name", "a snake"));
-  EXPECT_FALSE(FindMatchingValue("name", "a mushroom"));
-  EXPECT_TRUE(FindMatchingValue("name", "a cat"));
-  EXPECT_TRUE(FindMatchingValue("name", "a dog"));
-  EXPECT_FALSE(FindMatchingValue("name", "a pony"));
 }
 #endif  // !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
 
@@ -2810,6 +2498,53 @@ TEST_F(TraceEventTestFixture, ContextLambda) {
             "Unsupported (crbug.com/1225176)");
 #endif
 }
+
+#if BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
+class ConfigObserver : public TraceLog::EnabledStateObserver {
+ public:
+  ConfigObserver() = default;
+  ~ConfigObserver() override = default;
+
+  void OnTraceLogEnabled() override {
+    observed_config = TraceLog::GetInstance()->GetCurrentTraceConfig();
+    tracing_enabled.Signal();
+  }
+
+  void OnTraceLogDisabled() override { tracing_disabled.Signal(); }
+
+  TraceConfig observed_config;
+  WaitableEvent tracing_enabled{WaitableEvent::ResetPolicy::AUTOMATIC,
+                                WaitableEvent::InitialState::NOT_SIGNALED};
+  WaitableEvent tracing_disabled{WaitableEvent::ResetPolicy::AUTOMATIC,
+                                 WaitableEvent::InitialState::NOT_SIGNALED};
+};
+
+// Test that GetCurrentTraceConfig() returns the correct config when tracing
+// was started through Perfetto SDK.
+TEST_F(TraceEventTestFixture, GetCurrentTraceConfig) {
+  ConfigObserver observer;
+  TraceLog::GetInstance()->AddEnabledStateObserver(&observer);
+
+  const TraceConfig actual_config{"foo,bar", ""};
+  perfetto::TraceConfig perfetto_config;
+  perfetto_config.add_buffers()->set_size_kb(1000);
+  auto* source_config = perfetto_config.add_data_sources()->mutable_config();
+  source_config->set_name("track_event");
+  source_config->set_target_buffer(0);
+  source_config->mutable_chrome_config()->set_trace_config(
+      actual_config.ToString());
+
+  auto tracing_session = perfetto::Tracing::NewTrace();
+  tracing_session->Setup(perfetto_config);
+  tracing_session->Start();
+
+  observer.tracing_enabled.Wait();
+  tracing_session->Stop();
+  observer.tracing_disabled.Wait();
+
+  EXPECT_EQ(actual_config.ToString(), observer.observed_config.ToString());
+}
+#endif  // BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
 
 }  // namespace trace_event
 }  // namespace base

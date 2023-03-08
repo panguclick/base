@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,6 +13,7 @@
 #include "base/gtest_prod_util.h"
 #include "base/version.h"
 
+using DWORD = unsigned long;  // NOLINT(runtime/int)
 using HANDLE = void*;
 struct _OSVERSIONINFOEXW;
 struct _SYSTEM_INFO;
@@ -156,7 +157,7 @@ class BASE_EXPORT OSInfo {
 
  private:
   friend class base::test::ScopedOSInfoOverride;
-  // FRIEND_TEST_ALL_PREFIXES(OSInfo, MajorMinorBuildToVersion);
+  FRIEND_TEST_ALL_PREFIXES(OSInfo, MajorMinorBuildToVersion);
 
   // This enum contains a variety of 32-bit process types that could be
   // running with consideration towards WOW64.
@@ -183,7 +184,7 @@ class BASE_EXPORT OSInfo {
 
   OSInfo(const _OSVERSIONINFOEXW& version_info,
          const _SYSTEM_INFO& system_info,
-         int os_type);
+         DWORD os_type);
   ~OSInfo();
 
   // Returns a Version value for a given OS version tuple.

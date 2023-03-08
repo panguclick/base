@@ -1,4 +1,4 @@
-// Copyright (c) 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@
 
 #include <stddef.h>
 
+#include "base/allocator/partition_allocator/partition_alloc_base/component_export.h"
 #include "base/allocator/partition_allocator/partition_alloc_base/compiler_specific.h"
 #include "build/build_config.h"
 
@@ -42,9 +43,10 @@ namespace partition_alloc::internal {
 // Use PageAllocationGranularity(), PageAllocationGranularityShift()
 // to initialize and retrieve these values safely.
 struct PageCharacteristics {
-  std::atomic<int> size;
-  std::atomic<int> shift;
+  std::atomic<size_t> size;
+  std::atomic<size_t> shift;
 };
+PA_COMPONENT_EXPORT(PARTITION_ALLOC)
 extern PageCharacteristics page_characteristics;
 
 }  // namespace partition_alloc::internal
@@ -75,16 +77,17 @@ PageAllocationGranularityShift() {
   // compiled for 64kB are likely to work on 4kB systems, 64kB is a good choice
   // here.
   return 16;  // 64kB
-#elif defined(_MIPS_ARCH_LOONGSON)
+#elif defined(_MIPS_ARCH_LOONGSON) || defined(ARCH_CPU_LOONG64)
   return 14;  // 16kB
 #elif BUILDFLAG(IS_APPLE) && defined(ARCH_CPU_64_BITS)
-  return vm_page_shift;
+  return static_cast<size_t>(vm_page_shift);
 #elif BUILDFLAG(IS_LINUX) && defined(ARCH_CPU_ARM64)
   // arm64 supports 4kb (shift = 12), 16kb (shift = 14), and 64kb (shift = 16)
   // page sizes. Retrieve from or initialize cache.
-  int shift = page_characteristics.shift.load(std::memory_order_relaxed);
+  size_t shift = page_characteristics.shift.load(std::memory_order_relaxed);
   if (PA_UNLIKELY(shift == 0)) {
-    shift = __builtin_ctz((int)PageAllocationGranularity());
+    shift = static_cast<size_t>(
+        __builtin_ctz((unsigned int)PageAllocationGranularity()));
     page_characteristics.shift.store(shift, std::memory_order_relaxed);
   }
   return shift;
@@ -102,9 +105,9 @@ PageAllocationGranularity() {
 #elif BUILDFLAG(IS_LINUX) && defined(ARCH_CPU_ARM64)
   // arm64 supports 4kb, 16kb, and 64kb page sizes. Retrieve from or
   // initialize cache.
-  int size = page_characteristics.size.load(std::memory_order_relaxed);
+  size_t size = page_characteristics.size.load(std::memory_order_relaxed);
   if (PA_UNLIKELY(size == 0)) {
-    size = getpagesize();
+    size = static_cast<size_t>(getpagesize());
     page_characteristics.size.store(size, std::memory_order_relaxed);
   }
   return size;

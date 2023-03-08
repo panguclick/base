@@ -1,8 +1,10 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "base/metrics/sample_vector.h"
+
+#include <ostream>
 
 #include "base/check_op.h"
 #include "base/lazy_instance.h"
@@ -349,15 +351,6 @@ std::string SampleVector::GetAsciiBody() const {
   const double kLineLength = 72;
   if (max_size > kLineLength)
     scaling_factor = kLineLength / max_size;
-
-  // Calculate space needed to print bucket range numbers.  Leave room to print
-  // nearly the largest bucket range without sliding over the histogram.
-  uint32_t largest_non_empty_bucket = bucket_count() - 1;
-  while (0 == GetCountAtIndex(largest_non_empty_bucket)) {
-    if (0 == largest_non_empty_bucket)
-      break;  // All buckets are empty.
-    --largest_non_empty_bucket;
-  }
 
   // Calculate largest print width needed for any of our bucket range displays.
   size_t print_width = 1;

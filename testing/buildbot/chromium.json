@@ -11,6 +11,11 @@
       "all"
     ]
   },
+  "android-arm64-archive-rel": {
+    "additional_compile_targets": [
+      "all"
+    ]
+  },
   "android-official": {
     "additional_compile_targets": [
       "all"
@@ -23,14 +28,17 @@
   },
   "lacros-arm-archive-rel": {
     "additional_compile_targets": [
-      "chrome",
-      "lacros_version_metadata"
+      "chrome"
+    ]
+  },
+  "lacros-arm64-archive-rel": {
+    "additional_compile_targets": [
+      "chrome"
     ]
   },
   "lacros64-archive-rel": {
     "additional_compile_targets": [
-      "chrome",
-      "lacros_version_metadata"
+      "chrome"
     ]
   },
   "linux-archive-dbg": {

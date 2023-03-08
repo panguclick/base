@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Copyright (c) 2012 The Chromium Authors. All rights reserved.
+# Copyright 2012 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -16,24 +16,6 @@ import time
 
 # This is hardcoded to be src/ relative to this script.
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-CHROME_SANDBOX_ENV = 'CHROME_DEVEL_SANDBOX'
-CHROME_SANDBOX_PATH = '/opt/chromium/chrome_sandbox'
-
-
-def get_sandbox_env(env):
-  """Returns the environment flags needed for the SUID sandbox to work."""
-  extra_env = {}
-  chrome_sandbox_path = env.get(CHROME_SANDBOX_ENV, CHROME_SANDBOX_PATH)
-  # The above would silently disable the SUID sandbox if the env value were
-  # an empty string. We don't want to allow that. http://crbug.com/245376
-  # TODO(jln): Remove this check once it's no longer possible to disable the
-  # sandbox that way.
-  if not chrome_sandbox_path:
-    chrome_sandbox_path = CHROME_SANDBOX_PATH
-  extra_env[CHROME_SANDBOX_ENV] = chrome_sandbox_path
-
-  return extra_env
 
 
 def trim_cmd(cmd):
@@ -120,6 +102,8 @@ def get_sanitizer_env(asan, lsan, msan, tsan, cfi_diag):
     if lsan:
       msan_options.append('detect_leaks=1')
     extra_env['MSAN_OPTIONS'] = ' '.join(msan_options)
+    extra_env['VK_ICD_FILENAMES'] = ''
+    extra_env['LIBGL_DRIVERS_PATH'] = ''
 
   if tsan:
     tsan_options = symbolization_options[:]
@@ -303,7 +287,7 @@ def forward_signals(procs):
     signal.signal(signal.SIGINT, _sig_handler)
 
 
-def run_executable(cmd, env, stdoutfile=None):
+def run_executable(cmd, env, stdoutfile=None, cwd=None):
   """Runs an executable with:
     - CHROME_HEADLESS set to indicate that the test is running on a
       bot and shouldn't do anything interactive like show modal dialogs.
@@ -324,7 +308,6 @@ def run_executable(cmd, env, stdoutfile=None):
   # Used by base/base_paths_linux.cc as an override. Just make sure the default
   # logic is used.
   env.pop('CR_SOURCE_ROOT', None)
-  extra_env.update(get_sandbox_env(env))
 
   # Copy logic from  tools/build/scripts/slave/runtest.py.
   asan = '--asan=1' in cmd
@@ -382,12 +365,15 @@ def run_executable(cmd, env, stdoutfile=None):
   try:
     if stdoutfile:
       # Write to stdoutfile and poll to produce terminal output.
-      return run_command_with_output(cmd, env=env, stdoutfile=stdoutfile)
+      return run_command_with_output(cmd,
+                                     env=env,
+                                     stdoutfile=stdoutfile,
+                                     cwd=cwd)
     if use_symbolization_script:
       # See above comment regarding offline symbolization.
       # Need to pipe to the symbolizer script.
       p1 = _popen(cmd, env=env, stdout=subprocess.PIPE,
-                  stderr=sys.stdout)
+                  cwd=cwd, stderr=sys.stdout)
       p2 = _popen(
           get_sanitizer_symbolize_command(executable_path=cmd[0]),
           env=env, stdin=p1.stdout)
@@ -398,7 +384,7 @@ def run_executable(cmd, env, stdoutfile=None):
       # Also feed the out-of-band JSON output to the symbolizer script.
       symbolize_snippets_in_json(cmd, env)
       return p1.returncode
-    return run_command(cmd, env=env, log=False)
+    return run_command(cmd, env=env, cwd=cwd, log=False)
   except OSError:
     print('Failed to start %s' % cmd, file=sys.stderr)
     raise

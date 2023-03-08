@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -88,6 +88,7 @@ bool SubstringSetMatcher::Build(
   return true;
 }
 
+SubstringSetMatcher::SubstringSetMatcher() = default;
 SubstringSetMatcher::~SubstringSetMatcher() = default;
 
 bool SubstringSetMatcher::Match(
@@ -239,7 +240,8 @@ void SubstringSetMatcher::InsertPatternIntoAhoCorasickTree(
   // Create new nodes if necessary.
   while (i != text_end) {
     tree_.emplace_back();
-    current_node->SetEdge(static_cast<unsigned char>(*i), tree_.size() - 1);
+    current_node->SetEdge(static_cast<unsigned char>(*i),
+                          static_cast<NodeID>(tree_.size() - 1));
     current_node = &tree_.back();
     ++i;
   }
@@ -380,13 +382,13 @@ SubstringSetMatcher::NodeID
 SubstringSetMatcher::AhoCorasickNode::GetEdgeNoInline(uint32_t label) const {
   DCHECK(edges_capacity_ != 0);
 #ifdef __SSE2__
-  const __m128i lbl = _mm_set1_epi32(label);
+  const __m128i lbl = _mm_set1_epi32(static_cast<int>(label));
   const __m128i mask = _mm_set1_epi32(0x1ff);
   for (unsigned edge_idx = 0; edge_idx < num_edges(); edge_idx += 4) {
     const __m128i four = _mm_loadu_si128(
         reinterpret_cast<const __m128i*>(&edges_.edges[edge_idx]));
     const __m128i match = _mm_cmpeq_epi32(_mm_and_si128(four, mask), lbl);
-    const uint32_t match_mask = _mm_movemask_epi8(match);
+    const uint32_t match_mask = static_cast<uint32_t>(_mm_movemask_epi8(match));
     if (match_mask != 0) {
       if (match_mask & 0x1u) {
         return edges_.edges[edge_idx].node_id;
@@ -439,12 +441,13 @@ void SubstringSetMatcher::AhoCorasickNode::SetEdge(uint32_t label,
   }
 
   if (num_free_edges_ == 0) {
-    // We are out of space, so double our capacity. This can either be
-    // because we are converting from inline to heap storage, or because
-    // we are increasing the size of our heap storage.
+    // We are out of space, so double our capacity (unless that would cause
+    // num_free_edges_ to overflow). This can either be because we are
+    // converting from inline to heap storage, or because we are increasing the
+    // size of our heap storage.
     unsigned old_capacity =
         edges_capacity_ == 0 ? kNumInlineEdges : edges_capacity_;
-    unsigned new_capacity = old_capacity * 2;
+    unsigned new_capacity = std::min(old_capacity * 2, kEmptyLabel + 1);
     DCHECK_EQ(0u, new_capacity % 4);
     AhoCorasickEdge* new_edges = new AhoCorasickEdge[new_capacity];
     memcpy(new_edges, edges(), sizeof(AhoCorasickEdge) * old_capacity);
@@ -456,8 +459,9 @@ void SubstringSetMatcher::AhoCorasickNode::SetEdge(uint32_t label,
       delete[] edges_.edges;
     }
     edges_.edges = new_edges;
-    edges_capacity_ = new_capacity;
-    num_free_edges_ = new_capacity - old_capacity;
+    // These casts are safe due to the DCHECK above.
+    edges_capacity_ = static_cast<uint16_t>(new_capacity);
+    num_free_edges_ = static_cast<uint8_t>(new_capacity - old_capacity);
   }
 
   // Insert the new edge at the end of our heap storage.

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -28,7 +28,7 @@ class PostTaskAndReplyTaskRunner : public internal::PostTaskAndReplyImpl {
   bool PostTask(const Location& from_here, OnceClosure task) override;
 
   // Non-owning.
-  raw_ptr<TaskRunner> destination_;
+  raw_ptr<TaskRunner, DanglingUntriaged> destination_;
 };
 
 PostTaskAndReplyTaskRunner::PostTaskAndReplyTaskRunner(

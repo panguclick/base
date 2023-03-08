@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,8 +8,11 @@
 #include <sddl.h>
 #include <windows.h>
 
+#include <utility>
+
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/strings/stringprintf.h"
 #include "base/win/scoped_handle.h"
 #include "base/win/scoped_localalloc.h"
 #include "base/win/sid.h"
@@ -23,6 +26,7 @@ namespace {
 constexpr wchar_t kBaseDacl[] = L"D:P(A;;FA;;;WD)";
 constexpr wchar_t kTest1Dacl[] = L"D:PAI(A;;FR;;;AU)(A;;FA;;;WD)";
 constexpr wchar_t kTest2Dacl[] = L"D:PAI(A;;FA;;;BA)(A;;FA;;;AU)(A;;FA;;;WD)";
+constexpr wchar_t kTest1DenyDacl[] = L"D:PAI(D;;FR;;;LG)(A;;FA;;;WD)";
 constexpr wchar_t kTest1DaclNoInherit[] = L"D:P(A;;FR;;;AU)(A;;FA;;;WD)";
 constexpr wchar_t kTest2DaclNoInherit[] =
     L"D:P(A;;FA;;;BA)(A;;FA;;;AU)(A;;FA;;;WD)";
@@ -39,6 +43,7 @@ constexpr wchar_t kTest3InheritedDacl[] = L"D:(A;ID;FR;;;AU)(A;ID;FA;;;WD)";
 constexpr wchar_t kNoWriteDacDacl[] = L"D:(D;;WD;;;OW)(A;;FRSD;;;WD)";
 
 constexpr wchar_t kAuthenticatedUsersSid[] = L"AU";
+constexpr wchar_t kLocalGuestSid[] = L"LG";
 
 std::wstring GetFileDacl(const FilePath& path) {
   PSECURITY_DESCRIPTOR sd;
@@ -92,6 +97,15 @@ TEST(SecurityUtilTest, GrantAccessToPathErrorCase) {
       GrantAccessToPath(path, *sids, FILE_GENERIC_READ, NO_INHERITANCE, true));
   EXPECT_TRUE(
       GrantAccessToPath(path, *sids, FILE_GENERIC_READ, NO_INHERITANCE, false));
+  std::vector<Sid> large_sid_list;
+  while (large_sid_list.size() < 0x10000) {
+    auto sid = Sid::FromSddlString(
+        base::StringPrintf(L"S-1-5-1234-%zu", large_sid_list.size()).c_str());
+    ASSERT_TRUE(sid);
+    large_sid_list.emplace_back(std::move(*sid));
+  }
+  EXPECT_FALSE(GrantAccessToPath(path, large_sid_list, FILE_GENERIC_READ,
+                                 NO_INHERITANCE, false));
   path = temp_dir.GetPath().Append(L"test_nowritedac");
   ASSERT_TRUE(CreateWithDacl(path, kNoWriteDacDacl, false));
   EXPECT_FALSE(
@@ -124,6 +138,9 @@ TEST(SecurityUtilTest, GrantAccessToPathFileNoInherit) {
   FilePath path = temp_dir.GetPath().Append(L"test");
   ASSERT_TRUE(CreateWithDacl(path, kBaseDacl, false));
   EXPECT_EQ(kBaseDacl, GetFileDacl(path));
+  EXPECT_TRUE(
+      GrantAccessToPath(path, {}, FILE_GENERIC_READ, NO_INHERITANCE, false));
+  EXPECT_EQ(kBaseDacl, GetFileDacl(path));
   auto sids = Sid::FromSddlStringVector({kAuthenticatedUsersSid});
   ASSERT_TRUE(sids);
   EXPECT_TRUE(
@@ -134,6 +151,22 @@ TEST(SecurityUtilTest, GrantAccessToPathFileNoInherit) {
   EXPECT_TRUE(
       GrantAccessToPath(path, *sids2, GENERIC_ALL, NO_INHERITANCE, false));
   EXPECT_EQ(kTest2DaclNoInherit, GetFileDacl(path));
+}
+
+TEST(SecurityUtilTest, DenyAccessToPathFile) {
+  ScopedTempDir temp_dir;
+  ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
+  FilePath path = temp_dir.GetPath().Append(L"test");
+  ASSERT_TRUE(CreateWithDacl(path, kBaseDacl, false));
+  EXPECT_EQ(kBaseDacl, GetFileDacl(path));
+  EXPECT_TRUE(
+      DenyAccessToPath(path, {}, FILE_GENERIC_READ, NO_INHERITANCE, true));
+  EXPECT_EQ(kBaseDacl, GetFileDacl(path));
+  auto sids = Sid::FromSddlStringVector({kLocalGuestSid});
+  ASSERT_TRUE(sids);
+  EXPECT_TRUE(
+      DenyAccessToPath(path, *sids, FILE_GENERIC_READ, NO_INHERITANCE, true));
+  EXPECT_EQ(kTest1DenyDacl, GetFileDacl(path));
 }
 
 TEST(SecurityUtilTest, GrantAccessToPathDirectory) {
@@ -184,7 +217,7 @@ TEST(SecurityUtilTest, GrantAccessToPathDirectoryNoInherit) {
 
 TEST(SecurityUtilTest, CloneSidVector) {
   std::vector<Sid> sids =
-      *Sid::FromKnownSidVector({WellKnownSid::kNull, WellKnownSid::kWorld});
+      Sid::FromKnownSidVector({WellKnownSid::kNull, WellKnownSid::kWorld});
   std::vector<Sid> clone = CloneSidVector(sids);
   ASSERT_EQ(sids.size(), clone.size());
   for (size_t index = 0; index < sids.size(); ++index) {
@@ -196,13 +229,13 @@ TEST(SecurityUtilTest, CloneSidVector) {
 
 TEST(SecurityUtilTest, AppendSidVector) {
   std::vector<Sid> sids =
-      *Sid::FromKnownSidVector({WellKnownSid::kNull, WellKnownSid::kWorld});
+      Sid::FromKnownSidVector({WellKnownSid::kNull, WellKnownSid::kWorld});
 
   std::vector<Sid> total_sids;
   AppendSidVector(total_sids, sids);
   EXPECT_EQ(total_sids.size(), sids.size());
 
-  std::vector<Sid> sids2 = *Sid::FromKnownSidVector(
+  std::vector<Sid> sids2 = Sid::FromKnownSidVector(
       {WellKnownSid::kCreatorOwner, WellKnownSid::kNetwork});
   AppendSidVector(total_sids, sids2);
   EXPECT_EQ(total_sids.size(), sids.size() + sids2.size());
@@ -218,6 +251,16 @@ TEST(SecurityUtilTest, AppendSidVector) {
     ASSERT_NE(sid_interator->GetPSID(), sids2[index].GetPSID());
     sid_interator++;
   }
+}
+
+TEST(SecurityUtilTest, GetGrantedAccess) {
+  EXPECT_FALSE(GetGrantedAccess(nullptr));
+  ScopedHandle handle(::CreateMutexEx(nullptr, nullptr, 0, MUTEX_MODIFY_STATE));
+  EXPECT_EQ(GetGrantedAccess(handle.get()), DWORD{MUTEX_MODIFY_STATE});
+  handle.Set(::CreateMutexEx(nullptr, nullptr, 0, READ_CONTROL));
+  EXPECT_EQ(GetGrantedAccess(handle.get()), DWORD{READ_CONTROL});
+  handle.Set(::CreateMutexEx(nullptr, nullptr, 0, GENERIC_ALL));
+  EXPECT_EQ(GetGrantedAccess(handle.get()), DWORD{MUTEX_ALL_ACCESS});
 }
 
 }  // namespace win

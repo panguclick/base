@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -266,12 +266,12 @@ public class LocaleUtilsTest {
     @Test
     @SmallTest
     public void testToLanguage() {
-        Assert.assertEquals("en", LocaleUtils.toLanguage("en-US"));
-        Assert.assertEquals("en", LocaleUtils.toLanguage("en"));
-        Assert.assertEquals("", LocaleUtils.toLanguage("-"));
-        Assert.assertEquals("", LocaleUtils.toLanguage("-US"));
-        Assert.assertEquals("", LocaleUtils.toLanguage(""));
-        Assert.assertEquals("fil", LocaleUtils.toLanguage("fil"));
+        Assert.assertEquals("en", LocaleUtils.toBaseLanguage("en-US"));
+        Assert.assertEquals("en", LocaleUtils.toBaseLanguage("en"));
+        Assert.assertEquals("", LocaleUtils.toBaseLanguage("-"));
+        Assert.assertEquals("", LocaleUtils.toBaseLanguage("-US"));
+        Assert.assertEquals("", LocaleUtils.toBaseLanguage(""));
+        Assert.assertEquals("fil", LocaleUtils.toBaseLanguage("fil"));
     }
 
     // Test for isBaseLanguageEqual

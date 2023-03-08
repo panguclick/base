@@ -1,4 +1,4 @@
-// Copyright (c) 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,13 +10,16 @@
 #include <limits>
 #include <tuple>
 
-#include "base/allocator/buildflags.h"
 #include "base/allocator/partition_allocator/address_pool_manager.h"
 #include "base/allocator/partition_allocator/partition_address_space.h"
 #include "base/allocator/partition_allocator/partition_alloc_base/compiler_specific.h"
 #include "base/allocator/partition_allocator/partition_alloc_base/component_export.h"
+#include "base/allocator/partition_allocator/partition_alloc_base/debug/debugging_buildflags.h"
+#include "base/allocator/partition_allocator/partition_alloc_buildflags.h"
 #include "base/allocator/partition_allocator/partition_alloc_check.h"
+#include "base/allocator/partition_allocator/partition_alloc_config.h"
 #include "base/allocator/partition_allocator/partition_alloc_constants.h"
+#include "base/allocator/partition_allocator/pkey.h"
 #include "base/allocator/partition_allocator/tagging.h"
 #include "build/build_config.h"
 
@@ -58,10 +61,10 @@ static constexpr uint16_t kOffsetTagNormalBuckets =
 //
 // *) In 32-bit mode, Y is not used by PartitionAlloc, and cannot be used
 //    until X is unreserved, because PartitionAlloc always uses kSuperPageSize
-//    alignment when reserving address spaces. One can use "GigaCage" to
-//    further determine which part of the supe page is used by PartitionAlloc.
-//    This isn't a problem in 64-bit mode, where allocation granularity is
-//    kSuperPageSize.
+//    alignment when reserving address spaces. One can use check "is in pool?"
+//    to further determine which part of the super page is used by
+//    PartitionAlloc. This isn't a problem in 64-bit mode, where allocation
+//    granularity is kSuperPageSize.
 class PA_COMPONENT_EXPORT(PARTITION_ALLOC) ReservationOffsetTable {
  public:
 #if defined(PA_HAS_64_BITS_POINTERS)
@@ -79,7 +82,7 @@ class PA_COMPONENT_EXPORT(PARTITION_ALLOC) ReservationOffsetTable {
   static_assert(kReservationOffsetTableLength < kOffsetTagNormalBuckets,
                 "Offsets should be smaller than kOffsetTagNormalBuckets.");
 
-  static struct _ReservationOffsetTable {
+  struct _ReservationOffsetTable {
     // The number of table elements is less than MAX_UINT16, so the element type
     // can be uint16_t.
     static_assert(
@@ -91,19 +94,30 @@ class PA_COMPONENT_EXPORT(PARTITION_ALLOC) ReservationOffsetTable {
       for (uint16_t& offset : offsets)
         offset = kOffsetTagNotAllocated;
     }
+  };
 #if defined(PA_HAS_64_BITS_POINTERS)
-    // One table per Pool.
-  } reservation_offset_tables_[kNumPools];
+  // If pkey support is enabled, we need to pkey-tag the tables of the pkey
+  // pool. For this, we need to pad the tables so that the pkey ones start on a
+  // page boundary.
+  struct _PaddedReservationOffsetTables {
+    char pad_[PA_PKEY_ARRAY_PAD_SZ(_ReservationOffsetTable, kNumPools)] = {};
+    struct _ReservationOffsetTable tables[kNumPools];
+    char pad_after_[PA_PKEY_FILL_PAGE_SZ(sizeof(_ReservationOffsetTable))] = {};
+  };
+  static PA_CONSTINIT _PaddedReservationOffsetTables
+      padded_reservation_offset_tables_ PA_PKEY_ALIGN;
 #else
     // A single table for the entire 32-bit address space.
-  } reservation_offset_table_;
+  static PA_CONSTINIT struct _ReservationOffsetTable reservation_offset_table_;
 #endif
 };
 
 #if defined(PA_HAS_64_BITS_POINTERS)
 PA_ALWAYS_INLINE uint16_t* GetReservationOffsetTable(pool_handle handle) {
   PA_DCHECK(0 < handle && handle <= kNumPools);
-  return ReservationOffsetTable::reservation_offset_tables_[handle - 1].offsets;
+  return ReservationOffsetTable::padded_reservation_offset_tables_
+      .tables[handle - 1]
+      .offsets;
 }
 
 PA_ALWAYS_INLINE const uint16_t* GetReservationOffsetTableEnd(
@@ -145,7 +159,6 @@ PA_ALWAYS_INLINE const uint16_t* GetReservationOffsetTableEnd(
 PA_ALWAYS_INLINE uint16_t* ReservationOffsetPointer(uintptr_t address) {
 #if defined(PA_HAS_64_BITS_POINTERS)
   // In 64-bit mode, find the owning Pool and compute the offset from its base.
-  address = ::partition_alloc::internal::UnmaskPtr(address);
   auto [pool, offset] = GetPoolAndOffset(address);
   return ReservationOffsetPointer(pool, offset);
 #else
@@ -168,8 +181,14 @@ PA_ALWAYS_INLINE uintptr_t GetDirectMapReservationStart(uintptr_t address) {
 #if BUILDFLAG(PA_DCHECK_IS_ON)
   bool is_in_brp_pool = IsManagedByPartitionAllocBRPPool(address);
   bool is_in_regular_pool = IsManagedByPartitionAllocRegularPool(address);
-  // When USE_BACKUP_REF_PTR is off, BRP pool isn't used.
-#if !BUILDFLAG(USE_BACKUP_REF_PTR)
+  bool is_in_configurable_pool =
+      IsManagedByPartitionAllocConfigurablePool(address);
+#if BUILDFLAG(ENABLE_PKEYS)
+  bool is_in_pkey_pool = IsManagedByPartitionAllocPkeyPool(address);
+#endif
+
+  // When ENABLE_BACKUP_REF_PTR_SUPPORT is off, BRP pool isn't used.
+#if !BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT)
   PA_DCHECK(!is_in_brp_pool);
 #endif
 #endif  // BUILDFLAG(PA_DCHECK_IS_ON)
@@ -179,19 +198,29 @@ PA_ALWAYS_INLINE uintptr_t GetDirectMapReservationStart(uintptr_t address) {
     return 0;
   uintptr_t reservation_start = ComputeReservationStart(address, offset_ptr);
 #if BUILDFLAG(PA_DCHECK_IS_ON)
-  // Make sure the reservation start is in the same pool as |address|.
-  // In the 32-bit mode, the beginning of a reservation may be excluded from the
-  // BRP pool, so shift the pointer. The other pools don't have this logic.
-  PA_DCHECK(is_in_brp_pool ==
-            IsManagedByPartitionAllocBRPPool(
-                reservation_start
+  // MSVC workaround: the preprocessor seems to choke on an `#if` embedded
+  // inside another macro (PA_DCHECK).
 #if !defined(PA_HAS_64_BITS_POINTERS)
-                + AddressPoolManagerBitmap::kBytesPer1BitOfBRPPoolBitmap *
-                      AddressPoolManagerBitmap::kGuardOffsetOfBRPPoolBitmap
+  constexpr size_t kBRPOffset =
+      AddressPoolManagerBitmap::kBytesPer1BitOfBRPPoolBitmap *
+      AddressPoolManagerBitmap::kGuardOffsetOfBRPPoolBitmap;
+#else
+  constexpr size_t kBRPOffset = 0ull;
 #endif  // !defined(PA_HAS_64_BITS_POINTERS)
-                ));
+  // Make sure the reservation start is in the same pool as |address|.
+  // In the 32-bit mode, the beginning of a reservation may be excluded
+  // from the BRP pool, so shift the pointer. The other pools don't have
+  // this logic.
+  PA_DCHECK(is_in_brp_pool ==
+            IsManagedByPartitionAllocBRPPool(reservation_start + kBRPOffset));
   PA_DCHECK(is_in_regular_pool ==
             IsManagedByPartitionAllocRegularPool(reservation_start));
+  PA_DCHECK(is_in_configurable_pool ==
+            IsManagedByPartitionAllocConfigurablePool(reservation_start));
+#if BUILDFLAG(ENABLE_PKEYS)
+  PA_DCHECK(is_in_pkey_pool ==
+            IsManagedByPartitionAllocPkeyPool(reservation_start));
+#endif
   PA_DCHECK(*ReservationOffsetPointer(reservation_start) == 0);
 #endif  // BUILDFLAG(PA_DCHECK_IS_ON)
 
@@ -252,22 +281,5 @@ PA_ALWAYS_INLINE bool IsManagedByNormalBucketsOrDirectMap(uintptr_t address) {
 }
 
 }  // namespace partition_alloc::internal
-
-namespace base::internal {
-
-// TODO(https://crbug.com/1288247): Remove these 'using' declarations once
-// the migration to the new namespaces gets done.
-using ::partition_alloc::internal::GetDirectMapReservationStart;
-using ::partition_alloc::internal::GetReservationOffsetTable;
-using ::partition_alloc::internal::GetReservationOffsetTableEnd;
-using ::partition_alloc::internal::IsManagedByDirectMap;
-using ::partition_alloc::internal::IsManagedByNormalBuckets;
-using ::partition_alloc::internal::IsManagedByNormalBucketsOrDirectMap;
-using ::partition_alloc::internal::IsReservationStart;
-using ::partition_alloc::internal::kOffsetTagNormalBuckets;
-using ::partition_alloc::internal::kOffsetTagNotAllocated;
-using ::partition_alloc::internal::ReservationOffsetPointer;
-
-}  // namespace base::internal
 
 #endif  // BASE_ALLOCATOR_PARTITION_ALLOCATOR_RESERVATION_OFFSET_TABLE_H_

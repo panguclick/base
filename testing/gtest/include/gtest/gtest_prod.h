@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,8 +9,7 @@
 // it stabilizes, Chromium code will use forwarding headers in testing/gtest
 // and testing/gmock, instead of directly including files in
 // third_party/googletest.
-//delete by kingkong
-//#include "third_party/googletest/src/googletest/include/gtest/gtest_prod.h"
-//end
+
+#include "third_party/googletest/src/googletest/include/gtest/gtest_prod.h"  // IWYU pragma: export
 
 #endif  // TESTING_GTEST_INCLUDE_GTEST_GTEST_PROD_H_

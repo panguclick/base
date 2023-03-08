@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -2718,6 +2718,15 @@ TEST_F(FileUtilTest, CreateNewTempDirectoryTest) {
   FilePath temp_dir;
   ASSERT_TRUE(CreateNewTempDirectory(FilePath::StringType(), &temp_dir));
   EXPECT_TRUE(PathExists(temp_dir));
+
+#if BUILDFLAG(IS_WIN)
+  FilePath expected_parent_dir;
+  EXPECT_TRUE(PathService::Get(
+      ::IsUserAnAdmin() ? int{DIR_PROGRAM_FILES} : int{DIR_TEMP},
+      &expected_parent_dir));
+  EXPECT_TRUE(expected_parent_dir.IsParent(temp_dir));
+#endif  // BUILDFLAG(IS_WIN)
+
   EXPECT_TRUE(DeleteFile(temp_dir));
 }
 
@@ -3108,6 +3117,33 @@ TEST_F(FileUtilTest, ReadFile) {
             ReadFile(file_path_not_exist,
                      &exact_buffer[0],
                      static_cast<int>(exact_buffer.size())));
+}
+
+TEST_F(FileUtilTest, ReadFileToBytes) {
+  const std::vector<uint8_t> kTestData = {'0', '1', '2', '3'};
+
+  FilePath file_path =
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("ReadFileToStringTest"));
+  FilePath file_path_dangerous =
+      temp_dir_.GetPath()
+          .Append(FILE_PATH_LITERAL(".."))
+          .Append(temp_dir_.GetPath().BaseName())
+          .Append(FILE_PATH_LITERAL("ReadFileToStringTest"));
+
+  // Create test file.
+  ASSERT_TRUE(WriteFile(file_path, kTestData));
+
+  absl::optional<std::vector<uint8_t>> bytes = ReadFileToBytes(file_path);
+  ASSERT_TRUE(bytes.has_value());
+  EXPECT_EQ(kTestData, bytes);
+
+  // Write empty file.
+  ASSERT_TRUE(WriteFile(file_path, ""));
+  bytes = ReadFileToBytes(file_path);
+  ASSERT_TRUE(bytes.has_value());
+  EXPECT_TRUE(bytes->empty());
+
+  ASSERT_FALSE(ReadFileToBytes(file_path_dangerous));
 }
 
 TEST_F(FileUtilTest, ReadFileToString) {
@@ -4142,16 +4178,15 @@ TEST_F(FileUtilTest, PreReadFile_ExistingFile_NoSize) {
   FilePath text_file = temp_dir_.GetPath().Append(FPL("text_file"));
   CreateTextFile(text_file, bogus_content);
 
-  EXPECT_TRUE(PreReadFile(text_file, /*is_executable=*/false).succeeded());
+  EXPECT_TRUE(PreReadFile(text_file, /*is_executable=*/false));
 }
 
 TEST_F(FileUtilTest, PreReadFile_ExistingFile_ExactSize) {
   FilePath text_file = temp_dir_.GetPath().Append(FPL("text_file"));
   CreateTextFile(text_file, bogus_content);
 
-  EXPECT_TRUE(
-      PreReadFile(text_file, /*is_executable=*/false, std::size(bogus_content))
-          .succeeded());
+  EXPECT_TRUE(PreReadFile(text_file, /*is_executable=*/false,
+                          std::size(bogus_content)));
 }
 
 TEST_F(FileUtilTest, PreReadFile_ExistingFile_OverSized) {
@@ -4159,8 +4194,7 @@ TEST_F(FileUtilTest, PreReadFile_ExistingFile_OverSized) {
   CreateTextFile(text_file, bogus_content);
 
   EXPECT_TRUE(PreReadFile(text_file, /*is_executable=*/false,
-                          std::size(bogus_content) * 2)
-                  .succeeded());
+                          std::size(bogus_content) * 2));
 }
 
 TEST_F(FileUtilTest, PreReadFile_ExistingFile_UnderSized) {
@@ -4168,16 +4202,14 @@ TEST_F(FileUtilTest, PreReadFile_ExistingFile_UnderSized) {
   CreateTextFile(text_file, bogus_content);
 
   EXPECT_TRUE(PreReadFile(text_file, /*is_executable=*/false,
-                          std::size(bogus_content) / 2)
-                  .succeeded());
+                          std::size(bogus_content) / 2));
 }
 
 TEST_F(FileUtilTest, PreReadFile_ExistingFile_ZeroSize) {
   FilePath text_file = temp_dir_.GetPath().Append(FPL("text_file"));
   CreateTextFile(text_file, bogus_content);
 
-  EXPECT_TRUE(PreReadFile(text_file, /*is_executable=*/false, /*max_bytes=*/0)
-                  .succeeded());
+  EXPECT_TRUE(PreReadFile(text_file, /*is_executable=*/false, /*max_bytes=*/0));
 }
 
 TEST_F(FileUtilTest, PreReadFile_ExistingEmptyFile_NoSize) {
@@ -4192,14 +4224,25 @@ TEST_F(FileUtilTest, PreReadFile_ExistingEmptyFile_NoSize) {
 TEST_F(FileUtilTest, PreReadFile_ExistingEmptyFile_ZeroSize) {
   FilePath text_file = temp_dir_.GetPath().Append(FPL("text_file"));
   CreateTextFile(text_file, L"");
-  EXPECT_TRUE(PreReadFile(text_file, /*is_executable=*/false, /*max_bytes=*/0)
-                  .succeeded());
+  EXPECT_TRUE(PreReadFile(text_file, /*is_executable=*/false, /*max_bytes=*/0));
 }
 
 TEST_F(FileUtilTest, PreReadFile_InexistentFile) {
   FilePath inexistent_file = temp_dir_.GetPath().Append(FPL("inexistent_file"));
-  EXPECT_FALSE(
-      PreReadFile(inexistent_file, /*is_executable=*/false).succeeded());
+  EXPECT_FALSE(PreReadFile(inexistent_file, /*is_executable=*/false));
+}
+
+TEST_F(FileUtilTest, PreReadFile_Executable) {
+  FilePath exe_data_dir;
+  ASSERT_TRUE(PathService::Get(DIR_TEST_DATA, &exe_data_dir));
+  exe_data_dir = exe_data_dir.Append(FPL("pe_image_reader"));
+  ASSERT_TRUE(PathExists(exe_data_dir));
+
+  // Load a sample executable and confirm that it was successfully prefetched.
+  // `test_exe` is a Windows binary, which is fine in this case because only the
+  // Windows implementation treats binaries differently from other files.
+  const FilePath test_exe = exe_data_dir.Append(FPL("signed.exe"));
+  EXPECT_TRUE(PreReadFile(test_exe, /*is_executable=*/true));
 }
 
 // Test that temp files obtained racily are all unique (no interference between

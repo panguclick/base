@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -84,8 +84,7 @@ std::unique_ptr<HistogramBase> SparseHistogram::PersistentCreate(
     const char* name,
     HistogramSamples::Metadata* meta,
     HistogramSamples::Metadata* logged_meta) {
-  return WrapUnique(
-      new SparseHistogram(allocator, name, meta, logged_meta));
+  return WrapUnique(new SparseHistogram(allocator, name, meta, logged_meta));
 }
 
 SparseHistogram::~SparseHistogram() = default;
@@ -101,7 +100,7 @@ HistogramType SparseHistogram::GetHistogramType() const {
 bool SparseHistogram::HasConstructionArguments(
     Sample expected_minimum,
     Sample expected_maximum,
-    uint32_t expected_bucket_count) const {
+    size_t expected_bucket_count) const {
   // SparseHistogram never has min/max/bucket_count limit.
   return false;
 }
@@ -133,9 +132,34 @@ std::unique_ptr<HistogramSamples> SparseHistogram::SnapshotSamples() const {
   return std::move(snapshot);
 }
 
+std::unique_ptr<HistogramSamples> SparseHistogram::SnapshotUnloggedSamples()
+    const {
+  std::unique_ptr<SampleMap> snapshot(new SampleMap(name_hash()));
+
+  base::AutoLock auto_lock(lock_);
+  snapshot->Add(*unlogged_samples_);
+
+  return std::move(snapshot);
+}
+
+void SparseHistogram::MarkSamplesAsLogged(const HistogramSamples& samples) {
+  DCHECK(!final_delta_created_);
+
+  base::AutoLock auto_lock(lock_);
+  unlogged_samples_->Subtract(samples);
+  logged_samples_->Add(samples);
+}
+
 std::unique_ptr<HistogramSamples> SparseHistogram::SnapshotDelta() {
   DCHECK(!final_delta_created_);
 
+  // We can't re-use SnapshotUnloggedSamples() or MarkSamplesAsLogged() here
+  // since |lock_| is not re-entrant.
+  // TODO(crbug/1052796): Consider removing the lock in this function, and
+  // just directly calling SnapshotUnloggedSamples() and MarkSamplesAsLogged(),
+  // since the lock may not be needed in between (similarly to
+  // Histogram::SnapshotDelta()). This would still ensure eventual consistency.
+  // Also make those functions final in order to avoid vtable lookups.
   std::unique_ptr<SampleMap> snapshot(new SampleMap(name_hash()));
   base::AutoLock auto_lock(lock_);
   snapshot->Add(*unlogged_samples_);
@@ -166,7 +190,7 @@ bool SparseHistogram::AddSamplesFromPickle(PickleIterator* iter) {
   return unlogged_samples_->AddFromPickle(iter);
 }
 
-base::Value SparseHistogram::ToGraphDict() const {
+base::Value::Dict SparseHistogram::ToGraphDict() const {
   std::unique_ptr<HistogramSamples> snapshot = SnapshotSamples();
   return snapshot->ToGraphDict(histogram_name(), flags());
 }
@@ -215,11 +239,11 @@ HistogramBase* SparseHistogram::DeserializeInfoImpl(PickleIterator* iter) {
   return SparseHistogram::FactoryGet(histogram_name, flags);
 }
 
-Value SparseHistogram::GetParameters() const {
+Value::Dict SparseHistogram::GetParameters() const {
   // Unlike Histogram::GetParameters, only set the type here, and no other
   // params. The other params do not make sense for sparse histograms.
-  Value params(Value::Type::DICTIONARY);
-  params.SetStringKey("type", HistogramTypeToString(GetHistogramType()));
+  Value::Dict params;
+  params.Set("type", HistogramTypeToString(GetHistogramType()));
   return params;
 }
 

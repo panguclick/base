@@ -11,7 +11,7 @@
   },
   "WebRTC Chromium FYI Android Builder (dbg)": {},
   "WebRTC Chromium FYI Android Builder ARM64 (dbg)": {},
-  "WebRTC Chromium FYI Android Tests (dbg) (M Nexus5X)": {
+  "WebRTC Chromium FYI Android Tests (dbg)": {
     "gtest_tests": [
       {
         "args": [
@@ -31,18 +31,10 @@
         },
         "swarming": {
           "can_use_on_swarming_builders": true,
-          "cipd_packages": [
-            {
-              "cipd_package": "infra/tools/luci/logdog/butler/${platform}",
-              "location": "bin",
-              "revision": "git_revision:ff387eadf445b24c935f1cf7d6ddd279f8a6b04c"
-            }
-          ],
           "dimension_sets": [
             {
-              "device_os": "MMB29Q",
               "device_os_type": "userdebug",
-              "device_type": "bullhead",
+              "device_type": "walleye",
               "os": "Android"
             }
           ],
@@ -63,7 +55,7 @@
       }
     ]
   },
-  "WebRTC Chromium FYI Android Tests (dbg) (N Nexus5X)": {
+  "WebRTC Chromium FYI Android Tests ARM64 (dbg)": {
     "gtest_tests": [
       {
         "args": [
@@ -83,18 +75,10 @@
         },
         "swarming": {
           "can_use_on_swarming_builders": true,
-          "cipd_packages": [
-            {
-              "cipd_package": "infra/tools/luci/logdog/butler/${platform}",
-              "location": "bin",
-              "revision": "git_revision:ff387eadf445b24c935f1cf7d6ddd279f8a6b04c"
-            }
-          ],
           "dimension_sets": [
             {
-              "device_os": "N",
               "device_os_type": "userdebug",
-              "device_type": "bullhead",
+              "device_type": "walleye",
               "os": "Android"
             }
           ],
@@ -149,29 +133,6 @@
         },
         "test": "browser_tests",
         "test_id_prefix": "ninja://chrome/test:browser_tests/"
-      },
-      {
-        "args": [
-          "--gtest_filter=WebRtcApprtcBrowserTest.*",
-          "--run-manual",
-          "--test-launcher-jobs=1"
-        ],
-        "merge": {
-          "args": [],
-          "script": "//testing/merge_scripts/standard_gtest_merge.py"
-        },
-        "swarming": {
-          "can_use_on_swarming_builders": true,
-          "dimension_sets": [
-            {
-              "cpu": "x86-64",
-              "os": "Ubuntu-18.04"
-            }
-          ],
-          "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com"
-        },
-        "test": "browser_tests_apprtc",
-        "test_id_prefix": "ninja://chrome/test:browser_tests_apprtc/"
       },
       {
         "args": [
@@ -290,36 +251,13 @@
           "dimension_sets": [
             {
               "cpu": "x86-64",
-              "os": "Mac-11|Mac-10.16"
+              "os": "Mac-12"
             }
           ],
           "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com"
         },
         "test": "browser_tests",
         "test_id_prefix": "ninja://chrome/test:browser_tests/"
-      },
-      {
-        "args": [
-          "--gtest_filter=WebRtcApprtcBrowserTest.*",
-          "--run-manual",
-          "--test-launcher-jobs=1"
-        ],
-        "merge": {
-          "args": [],
-          "script": "//testing/merge_scripts/standard_gtest_merge.py"
-        },
-        "swarming": {
-          "can_use_on_swarming_builders": true,
-          "dimension_sets": [
-            {
-              "cpu": "x86-64",
-              "os": "Mac-11|Mac-10.16"
-            }
-          ],
-          "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com"
-        },
-        "test": "browser_tests_apprtc",
-        "test_id_prefix": "ninja://chrome/test:browser_tests_apprtc/"
       },
       {
         "args": [
@@ -334,7 +272,7 @@
           "dimension_sets": [
             {
               "cpu": "x86-64",
-              "os": "Mac-11|Mac-10.16"
+              "os": "Mac-12"
             }
           ],
           "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com"
@@ -359,7 +297,7 @@
           "dimension_sets": [
             {
               "cpu": "x86-64",
-              "os": "Mac-11|Mac-10.16"
+              "os": "Mac-12"
             }
           ],
           "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com"
@@ -380,7 +318,7 @@
           "dimension_sets": [
             {
               "cpu": "x86-64",
-              "os": "Mac-11|Mac-10.16"
+              "os": "Mac-12"
             }
           ],
           "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com"
@@ -401,7 +339,7 @@
           "dimension_sets": [
             {
               "cpu": "x86-64",
-              "os": "Mac-11|Mac-10.16"
+              "os": "Mac-12"
             }
           ],
           "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com"
@@ -438,36 +376,13 @@
           "dimension_sets": [
             {
               "cpu": "x86-64",
-              "os": "Windows-10-19042"
+              "os": "Windows-10-19042|Windows-10-19045"
             }
           ],
           "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com"
         },
         "test": "browser_tests",
         "test_id_prefix": "ninja://chrome/test:browser_tests/"
-      },
-      {
-        "args": [
-          "--gtest_filter=WebRtcApprtcBrowserTest.*",
-          "--run-manual",
-          "--test-launcher-jobs=1"
-        ],
-        "merge": {
-          "args": [],
-          "script": "//testing/merge_scripts/standard_gtest_merge.py"
-        },
-        "swarming": {
-          "can_use_on_swarming_builders": true,
-          "dimension_sets": [
-            {
-              "cpu": "x86-64",
-              "os": "Windows-10-19042"
-            }
-          ],
-          "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com"
-        },
-        "test": "browser_tests_apprtc",
-        "test_id_prefix": "ninja://chrome/test:browser_tests_apprtc/"
       },
       {
         "args": [
@@ -482,7 +397,7 @@
           "dimension_sets": [
             {
               "cpu": "x86-64",
-              "os": "Windows-10-19042"
+              "os": "Windows-10-19042|Windows-10-19045"
             }
           ],
           "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com"
@@ -507,7 +422,7 @@
           "dimension_sets": [
             {
               "cpu": "x86-64",
-              "os": "Windows-10-19042"
+              "os": "Windows-10-19042|Windows-10-19045"
             }
           ],
           "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com"
@@ -528,7 +443,7 @@
           "dimension_sets": [
             {
               "cpu": "x86-64",
-              "os": "Windows-10-19042"
+              "os": "Windows-10-19042|Windows-10-19045"
             }
           ],
           "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com"
@@ -549,7 +464,7 @@
           "dimension_sets": [
             {
               "cpu": "x86-64",
-              "os": "Windows-10-19042"
+              "os": "Windows-10-19042|Windows-10-19045"
             }
           ],
           "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com"
@@ -571,7 +486,7 @@
           "--out-dir",
           "${ISOLATED_OUTDIR}",
           "--xcode-build-version",
-          "13c100",
+          "14b47b",
           "--xctest"
         ],
         "isolate_name": "ios_remoting_unittests",
@@ -596,12 +511,12 @@
           "dimension_sets": [
             {
               "cpu": "x86-64",
-              "os": "Mac-11|Mac-10.16"
+              "os": "Mac-12"
             }
           ],
           "named_caches": [
             {
-              "name": "xcode_ios_13c100",
+              "name": "xcode_ios_14b47b",
               "path": "Xcode.app"
             },
             {
@@ -623,7 +538,7 @@
           "--out-dir",
           "${ISOLATED_OUTDIR}",
           "--xcode-build-version",
-          "13c100",
+          "14b47b",
           "--xctest"
         ],
         "isolate_name": "ios_remoting_unittests",
@@ -648,12 +563,12 @@
           "dimension_sets": [
             {
               "cpu": "x86-64",
-              "os": "Mac-11|Mac-10.16"
+              "os": "Mac-12"
             }
           ],
           "named_caches": [
             {
-              "name": "xcode_ios_13c100",
+              "name": "xcode_ios_14b47b",
               "path": "Xcode.app"
             },
             {

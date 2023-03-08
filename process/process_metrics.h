@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,6 +15,7 @@
 
 #include "base/base_export.h"
 #include "base/gtest_prod_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/process/process_handle.h"
 #include "base/strings/string_piece.h"
 #include "base/time/time.h"
@@ -40,7 +41,6 @@
 #include <utility>
 #include <vector>
 
-#include "base/cpu.h"
 #include "base/threading/platform_thread.h"
 #endif
 
@@ -113,17 +113,22 @@ class BASE_EXPORT ProcessMetrics {
 #endif
 
   // Returns the percentage of time spent executing, across all threads of the
-  // process, in the interval since the last time the method was called. Since
-  // this considers the total execution time across all threads in a process,
-  // the result can easily exceed 100% in multi-thread processes running on
-  // multi-core systems. In general the result is therefore a value in the
-  // range 0% to SysInfo::NumberOfProcessors() * 100%.
+  // process, in the interval since the last time the method was called, using
+  // the current |cumulative_cpu|. Since this considers the total execution time
+  // across all threads in a process, the result can easily exceed 100% in
+  // multi-thread processes running on multi-core systems. In general the result
+  // is therefore a value in the range 0% to
+  // SysInfo::NumberOfProcessors() * 100%.
   //
   // To obtain the percentage of total available CPU resources consumed by this
   // process over the interval, the caller must divide by NumberOfProcessors().
   //
   // Since this API measures usage over an interval, it will return zero on the
   // first call, and an actual value only on the second and subsequent calls.
+  [[nodiscard]] double GetPlatformIndependentCPUUsage(TimeDelta cumulative_cpu);
+
+  // Same as the above, but automatically calls GetCumulativeCPUUsage() to
+  // determine the current cumulative CPU.
   [[nodiscard]] double GetPlatformIndependentCPUUsage();
 
   // Returns the cumulative CPU usage across all threads of the process since
@@ -138,10 +143,15 @@ class BASE_EXPORT ProcessMetrics {
   // and that they can replace the old implementation.
 
   // Returns the percentage of time spent executing, across all threads of the
-  // process, in the interval since the last time the method was called.
+  // process, in the interval since the last time the method was called, using
+  // the current |cumulative_cpu|.
   //
   // Same as GetPlatformIndependentCPUUSage() but implemented using
   // `QueryProcessCycleTime` for higher precision.
+  [[nodiscard]] double GetPreciseCPUUsage(TimeDelta cumulative_cpu);
+
+  // Same as the above, but automatically calls GetPreciseCumulativeCPUUsage()
+  // to determine the current cumulative CPU.
   [[nodiscard]] double GetPreciseCPUUsage();
 
   // Returns the cumulative CPU usage across all threads of the process since
@@ -165,29 +175,6 @@ class BASE_EXPORT ProcessMetrics {
   // NOTE: Currently only supported on Linux/Android.
   using CPUUsagePerThread = std::vector<std::pair<PlatformThreadId, TimeDelta>>;
   bool GetCumulativeCPUUsagePerThread(CPUUsagePerThread&);
-
-  // Similar to GetCumulativeCPUUsagePerThread, but also splits the cumulative
-  // CPU usage by CPU cluster frequency states. One entry in the output
-  // parameter is added for each thread + cluster core index + frequency state
-  // combination with a non-zero CPU time value.
-  // NOTE: Currently only supported on Linux/Android, and only on devices that
-  // expose per-pid/tid time_in_state files in /proc.
-  struct ThreadTimeInState {
-    PlatformThreadId thread_id;
-    CPU::CoreType core_type;      // type of the cores in this cluster.
-    uint32_t cluster_core_index;  // index of the first core in the cluster.
-    uint64_t core_frequency_khz;
-    TimeDelta cumulative_cpu_time;
-  };
-  using TimeInStatePerThread = std::vector<ThreadTimeInState>;
-  bool GetPerThreadCumulativeCPUTimeInState(TimeInStatePerThread&);
-
-  // Parse the data found in /proc/<pid>/task/<tid>/time_in_state into
-  // TimeInStatePerThread (adding to existing entries). Returns false on error.
-  // Exposed for testing.
-  bool ParseProcTimeInState(const std::string& content,
-                            PlatformThreadId tid,
-                            TimeInStatePerThread& time_in_state_per_thread);
 #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) ||
         // BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_AIX)
 
@@ -268,12 +255,6 @@ class BASE_EXPORT ProcessMetrics {
       uint64_t absolute_package_idle_wakeups);
 #endif
 
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID) || \
-    BUILDFLAG(IS_AIX)
-  CPU::CoreType GetCoreType(int core_index);
-#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) ||
-        // BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_AIX)
-
 #if BUILDFLAG(IS_WIN)
   win::ScopedHandle process_;
 #else
@@ -312,7 +293,7 @@ class BASE_EXPORT ProcessMetrics {
   // Queries the port provider if it's set.
   mach_port_t TaskForPid(ProcessHandle process) const;
 
-  PortProvider* port_provider_;
+  raw_ptr<PortProvider> port_provider_;
 #endif  // BUILDFLAG(IS_MAC)
 };
 
@@ -433,7 +414,7 @@ BASE_EXPORT int ParseProcStatCPU(StringPiece input);
 // This should be used with care as no synchronization with running threads is
 // done. This is mostly useful to guarantee being single-threaded.
 // Returns 0 on failure.
-BASE_EXPORT int GetNumberOfThreads(ProcessHandle process);
+BASE_EXPORT int64_t GetNumberOfThreads(ProcessHandle process);
 
 // /proc/self/exe refers to the current executable.
 BASE_EXPORT extern const char kProcSelfExe[];
@@ -449,10 +430,10 @@ struct BASE_EXPORT VmStatInfo {
   // Serializes the platform specific fields to value.
   Value ToValue() const;
 
-  unsigned long pswpin = 0;
-  unsigned long pswpout = 0;
-  unsigned long pgmajfault = 0;
-  unsigned long oom_kill = 0;
+  uint64_t pswpin = 0;
+  uint64_t pswpout = 0;
+  uint64_t pgmajfault = 0;
+  uint64_t oom_kill = 0;
 };
 
 // Retrieves data from /proc/vmstat about system-wide vm operations.
@@ -559,6 +540,7 @@ BASE_EXPORT bool GetGraphicsMemoryInfo(GraphicsMemoryInfoKB* gpu_meminfo);
 struct BASE_EXPORT SystemPerformanceInfo {
   SystemPerformanceInfo();
   SystemPerformanceInfo(const SystemPerformanceInfo& other);
+  SystemPerformanceInfo& operator=(const SystemPerformanceInfo& other);
 
   // Serializes the platform specific fields to value.
   Value ToValue() const;
@@ -607,7 +589,7 @@ class BASE_EXPORT SystemMetrics {
   Value ToValue() const;
 
  private:
-  // FRIEND_TEST_ALL_PREFIXES(SystemMetricsTest, SystemMetrics);
+  FRIEND_TEST_ALL_PREFIXES(SystemMetricsTest, SystemMetrics);
 
   size_t committed_memory_;
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)

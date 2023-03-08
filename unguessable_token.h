@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -47,7 +47,7 @@ struct UnguessableTokenHash;
 
 class BASE_EXPORT UnguessableToken {
  public:
-  // Create a unique UnguessableToken.
+  // Create a unique UnguessableToken. It's guaranteed to be nonempty.
   static UnguessableToken Create();
 
   // Returns a reference to a global null UnguessableToken. This should only be

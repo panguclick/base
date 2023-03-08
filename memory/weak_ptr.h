@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -241,19 +241,24 @@ class TRIVIAL_ABI WeakPtr : public internal::WeakPtrBase {
 
   // Allow conversion from U to T provided U "is a" T. Note that this
   // is separate from the (implicit) copy and move constructors.
-  template <typename U>
-  WeakPtr(const WeakPtr<U>& other) : WeakPtrBase(other) {
+  template <typename U,
+            typename = std::enable_if_t<std::is_convertible_v<U*, T*>>>
+  // NOLINTNEXTLINE(google-explicit-constructor)
+  /*implicit*/ WeakPtr(const WeakPtr<U>& other) : WeakPtrBase(other) {
     // Need to cast from U* to T* to do pointer adjustment in case of multiple
-    // inheritance. This also enforces the "U is a T" rule.
-    T* t = reinterpret_cast<U*>(other.ptr_);
-    ptr_ = reinterpret_cast<uintptr_t>(t);
+    // inheritance.
+    T* t_ptr = reinterpret_cast<U*>(ptr_);
+    ptr_ = reinterpret_cast<uintptr_t>(t_ptr);
   }
-  template <typename U>
-  WeakPtr(WeakPtr<U>&& other) noexcept : WeakPtrBase(std::move(other)) {
+  template <typename U,
+            typename = std::enable_if_t<std::is_convertible_v<U*, T*>>>
+  // NOLINTNEXTLINE(google-explicit-constructor)
+  /*implicit*/ WeakPtr(WeakPtr<U>&& other) noexcept
+      : WeakPtrBase(std::move(other)) {
     // Need to cast from U* to T* to do pointer adjustment in case of multiple
-    // inheritance. This also enforces the "U is a T" rule.
-    T* t = reinterpret_cast<U*>(other.ptr_);
-    ptr_ = reinterpret_cast<uintptr_t>(t);
+    // inheritance.
+    T* t_ptr = reinterpret_cast<U*>(ptr_);
+    ptr_ = reinterpret_cast<uintptr_t>(t_ptr);
   }
 
   T* get() const {
@@ -291,6 +296,7 @@ class TRIVIAL_ABI WeakPtr : public internal::WeakPtrBase {
   template <typename U> friend class WeakPtr;
   friend class SupportsWeakPtr<T>;
   friend class WeakPtrFactory<T>;
+  friend class WeakPtrFactory<std::remove_const_t<T>>;
   template <typename U>
   friend SafeRef<U> internal::MakeSafeRefFromWeakPtrInternals(
       const internal::WeakReference& ref,
@@ -346,7 +352,23 @@ class WeakPtrFactory : public internal::WeakPtrFactoryBase {
 
   ~WeakPtrFactory() = default;
 
-  WeakPtr<T> GetWeakPtr() const {
+  WeakPtr<const T> GetWeakPtr() const {
+    return WeakPtr<const T>(weak_reference_owner_.GetRef(),
+                            reinterpret_cast<const T*>(ptr_));
+  }
+
+  template <int&... ExplicitArgumentBarrier,
+            typename U = T,
+            typename = std::enable_if_t<!std::is_const_v<U>>>
+  WeakPtr<T> GetWeakPtr() {
+    return WeakPtr<T>(weak_reference_owner_.GetRef(),
+                      reinterpret_cast<T*>(ptr_));
+  }
+
+  template <int&... ExplicitArgumentBarrier,
+            typename U = T,
+            typename = std::enable_if_t<!std::is_const_v<U>>>
+  WeakPtr<T> GetMutableWeakPtr() const {
     return WeakPtr<T>(weak_reference_owner_.GetRef(),
                       reinterpret_cast<T*>(ptr_));
   }

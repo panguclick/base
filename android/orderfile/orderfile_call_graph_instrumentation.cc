@@ -1,4 +1,4 @@
-// Copyright (c) 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -180,7 +180,7 @@ __attribute__((always_inline, no_instrument_function)) void RecordAddress(
     // Only the code in the native library is instrumented. Callees are expected
     // to be within the native library bounds.
     Disable();
-    IMMEDIATE_CRASH();
+    ImmediateCrash();
   }
 
   size_t offset = callee_address - start;

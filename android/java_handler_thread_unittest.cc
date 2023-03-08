@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -18,8 +18,8 @@ class JavaHandlerThreadForTest : public android::JavaHandlerThread {
  public:
   explicit JavaHandlerThreadForTest(
       const char* name,
-      base::ThreadPriority priority = base::ThreadPriority::NORMAL)
-      : android::JavaHandlerThread(name, priority) {}
+      base::ThreadType thread_type = base::ThreadType::kDefault)
+      : android::JavaHandlerThread(name, thread_type) {}
 
   using android::JavaHandlerThread::state;
   using android::JavaHandlerThread::State;
@@ -64,7 +64,7 @@ class DummyTaskObserver : public TaskObserver {
 
 void PostNTasks(int posts_remaining) {
   if (posts_remaining > 1) {
-    ThreadTaskRunnerHandle::Get()->PostTask(
+    SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, BindOnce(&PostNTasks, posts_remaining - 1));
   }
 }
@@ -136,7 +136,7 @@ TEST_F(JavaHandlerThreadTest, RunTasksWhileShuttingDownJavaThread) {
   java_thread->task_runner()->PostTask(
       FROM_HERE, BindLambdaForTesting([&]() {
         sequence_manager->AddTaskObserver(&observer);
-        ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+        SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
             FROM_HERE, MakeExpectedNotRunClosure(FROM_HERE), Days(1));
         java_thread->StopSequenceManagerForTesting();
         PostNTasks(kNumPosts);

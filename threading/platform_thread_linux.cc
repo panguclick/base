@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -24,6 +24,7 @@
 #include "base/strings/stringprintf.h"
 #include "base/threading/platform_thread_internal_posix.h"
 #include "base/threading/thread_id_name_manager.h"
+#include "base/threading/thread_type_delegate.h"
 #include "build/build_config.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 
@@ -39,10 +40,16 @@
 namespace base {
 
 #if BUILDFLAG(IS_CHROMEOS)
-const Feature kSchedUtilHints{"SchedUtilHints", base::FEATURE_ENABLED_BY_DEFAULT};
+BASE_FEATURE(kSchedUtilHints,
+             "SchedUtilHints",
+             base::FEATURE_ENABLED_BY_DEFAULT);
 #endif
 
 namespace {
+
+#if !BUILDFLAG(IS_NACL)
+ThreadTypeDelegate* g_thread_type_delegate = nullptr;
+#endif
 
 #if BUILDFLAG(IS_CHROMEOS)
 std::atomic<bool> g_use_sched_util(true);
@@ -117,16 +124,16 @@ struct sched_attr {
 #define SCHED_FLAG_UTIL_CLAMP_MAX 0x40
 #endif
 
-int sched_getattr(pid_t pid,
-                  const struct sched_attr* attr,
-                  unsigned int size,
-                  unsigned int flags) {
+long sched_getattr(pid_t pid,
+                   const struct sched_attr* attr,
+                   unsigned int size,
+                   unsigned int flags) {
   return syscall(__NR_sched_getattr, pid, attr, size, flags);
 }
 
-int sched_setattr(pid_t pid,
-                  const struct sched_attr* attr,
-                  unsigned int flags) {
+long sched_setattr(pid_t pid,
+                   const struct sched_attr* attr,
+                   unsigned int flags) {
   return syscall(__NR_sched_setattr, pid, attr, flags);
 }
 #endif  // !BUILDFLAG(IS_NACL) && !BUILDFLAG(IS_AIX)
@@ -136,16 +143,26 @@ int sched_setattr(pid_t pid,
 const FilePath::CharType kCgroupDirectory[] =
     FILE_PATH_LITERAL("/sys/fs/cgroup");
 
-FilePath ThreadPriorityToCgroupDirectory(const FilePath& cgroup_filepath,
-                                         ThreadPriority priority) {
-  switch (priority) {
-    case ThreadPriority::NORMAL:
-      return cgroup_filepath;
-    case ThreadPriority::BACKGROUND:
+FilePath ThreadTypeToCgroupDirectory(const FilePath& cgroup_filepath,
+                                     ThreadType thread_type) {
+  switch (thread_type) {
+    case ThreadType::kBackground:
+    case ThreadType::kUtility:
+    case ThreadType::kResourceEfficient:
       return cgroup_filepath.Append(FILE_PATH_LITERAL("non-urgent"));
-    case ThreadPriority::DISPLAY:
-      [[fallthrough]];
-    case ThreadPriority::REALTIME_AUDIO:
+    case ThreadType::kDefault:
+      return cgroup_filepath;
+    case ThreadType::kCompositing:
+#if BUILDFLAG(IS_CHROMEOS)
+      // On ChromeOS, kCompositing is also considered urgent.
+      return cgroup_filepath.Append(FILE_PATH_LITERAL("urgent"));
+#else
+      // TODO(1329208): Experiment with bringing IS_LINUX inline with
+      // IS_CHROMEOS.
+      return cgroup_filepath;
+#endif
+    case ThreadType::kDisplayCritical:
+    case ThreadType::kRealtimeAudio:
       return cgroup_filepath.Append(FILE_PATH_LITERAL("urgent"));
   }
   NOTREACHED();
@@ -156,18 +173,20 @@ void SetThreadCgroup(PlatformThreadId thread_id,
                      const FilePath& cgroup_directory) {
   FilePath tasks_filepath = cgroup_directory.Append(FILE_PATH_LITERAL("tasks"));
   std::string tid = NumberToString(thread_id);
-  int bytes_written = WriteFile(tasks_filepath, tid.c_str(), tid.size());
-  if (bytes_written != static_cast<int>(tid.size())) {
+  // TODO(crbug.com/1333521): Remove cast.
+  const int size = static_cast<int>(tid.size());
+  int bytes_written = WriteFile(tasks_filepath, tid.data(), size);
+  if (bytes_written != size) {
     DVLOG(1) << "Failed to add " << tid << " to " << tasks_filepath.value();
   }
 }
 
-void SetThreadCgroupForThreadPriority(PlatformThreadId thread_id,
-                                      const FilePath& cgroup_filepath,
-                                      ThreadPriority priority) {
+void SetThreadCgroupForThreadType(PlatformThreadId thread_id,
+                                  const FilePath& cgroup_filepath,
+                                  ThreadType thread_type) {
   // Append "chrome" suffix.
-  FilePath cgroup_directory = ThreadPriorityToCgroupDirectory(
-      cgroup_filepath.Append(FILE_PATH_LITERAL("chrome")), priority);
+  FilePath cgroup_directory = ThreadTypeToCgroupDirectory(
+      cgroup_filepath.Append(FILE_PATH_LITERAL("chrome")), thread_type);
 
   // Silently ignore request if cgroup directory doesn't exist.
   if (!DirectoryExists(cgroup_directory))
@@ -181,7 +200,7 @@ void SetThreadCgroupForThreadPriority(PlatformThreadId thread_id,
 // FindThreadID).
 void SetThreadLatencySensitivity(ProcessId process_id,
                                  PlatformThreadId thread_id,
-                                 ThreadPriority priority) {
+                                 ThreadType thread_type) {
   struct sched_attr attr;
   bool is_urgent = false;
   int boost_percent, limit_percent;
@@ -226,15 +245,18 @@ void SetThreadLatencySensitivity(ProcessId process_id,
       attr.size != sizeof(attr))
     return;
 
-  switch (priority) {
-    case ThreadPriority::NORMAL:
-      [[fallthrough]];
-    case ThreadPriority::BACKGROUND:
+  switch (thread_type) {
+    case ThreadType::kBackground:
+    case ThreadType::kUtility:
+    case ThreadType::kResourceEfficient:
+    case ThreadType::kDefault:
       break;
-    case ThreadPriority::DISPLAY:
-      // Display needs a boost for consistent 60 fps compositing.
+    case ThreadType::kCompositing:
+    case ThreadType::kDisplayCritical:
+      // Compositing and display critical threads need a boost for consistent 60
+      // fps.
       [[fallthrough]];
-    case ThreadPriority::REALTIME_AUDIO:
+    case ThreadType::kRealtimeAudio:
       is_urgent = true;
       break;
   }
@@ -251,11 +273,15 @@ void SetThreadLatencySensitivity(ProcessId process_id,
   attr.sched_flags |= SCHED_FLAG_UTIL_CLAMP_MAX;
 
   if (is_urgent) {
-    attr.sched_util_min = (boost_percent * kSchedulerUclampMax + 50) / 100;
+    attr.sched_util_min =
+        (saturated_cast<uint32_t>(boost_percent) * kSchedulerUclampMax + 50) /
+        100;
     attr.sched_util_max = kSchedulerUclampMax;
   } else {
     attr.sched_util_min = kSchedulerUclampMin;
-    attr.sched_util_max = (limit_percent * kSchedulerUclampMax + 50) / 100;
+    attr.sched_util_max =
+        (saturated_cast<uint32_t>(limit_percent) * kSchedulerUclampMax + 50) /
+        100;
   }
 
   DCHECK_GE(attr.sched_util_min, kSchedulerUclampMin);
@@ -271,14 +297,15 @@ void SetThreadLatencySensitivity(ProcessId process_id,
 }
 #endif
 
-void SetThreadCgroupsForThreadPriority(PlatformThreadId thread_id,
-                                       ThreadPriority priority) {
+void SetThreadCgroupsForThreadType(PlatformThreadId thread_id,
+                                   ThreadType thread_type) {
   FilePath cgroup_filepath(kCgroupDirectory);
-  SetThreadCgroupForThreadPriority(
-      thread_id, cgroup_filepath.Append(FILE_PATH_LITERAL("cpuset")), priority);
-  SetThreadCgroupForThreadPriority(
+  SetThreadCgroupForThreadType(
+      thread_id, cgroup_filepath.Append(FILE_PATH_LITERAL("cpuset")),
+      thread_type);
+  SetThreadCgroupForThreadType(
       thread_id, cgroup_filepath.Append(FILE_PATH_LITERAL("schedtune")),
-      priority);
+      thread_type);
 }
 #endif
 }  // namespace
@@ -291,17 +318,31 @@ const struct sched_param kRealTimePrio = {8};
 #endif
 }  // namespace
 
-const ThreadPriorityToNiceValuePair kThreadPriorityToNiceValueMap[4] = {
-    {ThreadPriority::BACKGROUND, 10},
-    {ThreadPriority::NORMAL, 0},
-    {ThreadPriority::DISPLAY, -8},
-    {ThreadPriority::REALTIME_AUDIO, -10},
+const ThreadPriorityToNiceValuePairForTest
+    kThreadPriorityToNiceValueMapForTest[5] = {
+        {ThreadPriorityForTest::kRealtimeAudio, -10},
+        {ThreadPriorityForTest::kDisplay, -8},
+        {ThreadPriorityForTest::kNormal, 0},
+        {ThreadPriorityForTest::kUtility, 1},
+        {ThreadPriorityForTest::kBackground, 10},
 };
 
-bool CanSetThreadPriorityToRealtimeAudio() {
+const ThreadTypeToNiceValuePair kThreadTypeToNiceValueMap[7] = {
+    {ThreadType::kBackground, 10},       {ThreadType::kUtility, 1},
+    {ThreadType::kResourceEfficient, 0}, {ThreadType::kDefault, 0},
+#if BUILDFLAG(IS_CHROMEOS)
+    {ThreadType::kCompositing, -8},
+#else
+    // TODO(1329208): Experiment with bringing IS_LINUX inline with IS_CHROMEOS.
+    {ThreadType::kCompositing, 0},
+#endif
+    {ThreadType::kDisplayCritical, -8},  {ThreadType::kRealtimeAudio, -10},
+};
+
+bool CanSetThreadTypeToRealtimeAudio() {
 #if !BUILDFLAG(IS_NACL)
   // A non-zero soft-limit on RLIMIT_RTPRIO is required to be allowed to invoke
-  // pthread_setschedparam in SetCurrentThreadPriorityForPlatform().
+  // pthread_setschedparam in SetCurrentThreadTypeForPlatform().
   struct rlimit rlim;
   return getrlimit(RLIMIT_RTPRIO, &rlim) != 0 && rlim.rlim_cur != 0;
 #else
@@ -309,25 +350,34 @@ bool CanSetThreadPriorityToRealtimeAudio() {
 #endif
 }
 
-bool SetCurrentThreadPriorityForPlatform(ThreadPriority priority) {
+bool SetCurrentThreadTypeForPlatform(ThreadType thread_type,
+                                     MessagePumpType pump_type_hint) {
 #if !BUILDFLAG(IS_NACL)
+  const PlatformThreadId tid = PlatformThread::CurrentId();
+
+  if (g_thread_type_delegate &&
+      g_thread_type_delegate->HandleThreadTypeChange(tid, thread_type)) {
+    return true;
+  }
+
   // For legacy schedtune interface
-  SetThreadCgroupsForThreadPriority(PlatformThread::CurrentId(), priority);
+  SetThreadCgroupsForThreadType(tid, thread_type);
 
 #if BUILDFLAG(IS_CHROMEOS)
   // For upstream uclamp interface. We try both legacy (schedtune, as done
   // earlier) and upstream (uclamp) interfaces, and whichever succeeds wins.
-  SetThreadLatencySensitivity(0 /* ignore */, 0 /* thread-self */, priority);
+  SetThreadLatencySensitivity(0 /* ignore */, 0 /* thread-self */, thread_type);
 #endif
 
-  return priority == ThreadPriority::REALTIME_AUDIO &&
+  return thread_type == ThreadType::kRealtimeAudio &&
          pthread_setschedparam(pthread_self(), SCHED_RR, &kRealTimePrio) == 0;
 #else
   return false;
 #endif
 }
 
-absl::optional<ThreadPriority> GetCurrentThreadPriorityForPlatform() {
+absl::optional<ThreadPriorityForTest>
+GetCurrentThreadPriorityForPlatformForTest() {
 #if !BUILDFLAG(IS_NACL)
   int maybe_sched_rr = 0;
   struct sched_param maybe_realtime_prio = {0};
@@ -335,7 +385,7 @@ absl::optional<ThreadPriority> GetCurrentThreadPriorityForPlatform() {
                             &maybe_realtime_prio) == 0 &&
       maybe_sched_rr == SCHED_RR &&
       maybe_realtime_prio.sched_priority == kRealTimePrio.sched_priority) {
-    return absl::make_optional(ThreadPriority::REALTIME_AUDIO);
+    return absl::make_optional(ThreadPriorityForTest::kRealtimeAudio);
   }
 #endif
   return absl::nullopt;
@@ -367,27 +417,38 @@ void PlatformThread::SetName(const std::string& name) {
 #endif  //  !BUILDFLAG(IS_NACL) && !BUILDFLAG(IS_AIX)
 }
 
+#if !BUILDFLAG(IS_NACL)
+// static
+void PlatformThread::SetThreadTypeDelegate(ThreadTypeDelegate* delegate) {
+  // A component cannot override a delegate set by another component, thus
+  // disallow setting a delegate when one already exists.
+  DCHECK(!g_thread_type_delegate || !delegate);
+
+  g_thread_type_delegate = delegate;
+}
+#endif
+
 #if !BUILDFLAG(IS_NACL) && !BUILDFLAG(IS_AIX)
 // static
-void PlatformThread::SetThreadPriority(ProcessId process_id,
-                                       PlatformThreadId thread_id,
-                                       ThreadPriority priority) {
+void PlatformThread::SetThreadType(ProcessId process_id,
+                                   PlatformThreadId thread_id,
+                                   ThreadType thread_type) {
   // Changing current main threads' priority is not permitted in favor of
   // security, this interface is restricted to change only non-main thread
   // priority.
   CHECK_NE(thread_id, process_id);
 
   // For legacy schedtune interface
-  SetThreadCgroupsForThreadPriority(thread_id, priority);
+  SetThreadCgroupsForThreadType(thread_id, thread_type);
 
 #if BUILDFLAG(IS_CHROMEOS)
   // For upstream uclamp interface. We try both legacy (schedtune, as done
   // earlier) and upstream (uclamp) interfaces, and whichever succeeds wins.
-  SetThreadLatencySensitivity(process_id, thread_id, priority);
+  SetThreadLatencySensitivity(process_id, thread_id, thread_type);
 #endif
 
-  const int nice_setting = internal::ThreadPriorityToNiceValue(priority);
-  if (setpriority(PRIO_PROCESS, thread_id, nice_setting)) {
+  const int nice_setting = internal::ThreadTypeToNiceValue(thread_type);
+  if (setpriority(PRIO_PROCESS, static_cast<id_t>(thread_id), nice_setting)) {
     DVPLOG(1) << "Failed to set nice value of thread (" << thread_id << ") to "
               << nice_setting;
   }
@@ -395,7 +456,7 @@ void PlatformThread::SetThreadPriority(ProcessId process_id,
 #endif  //  !BUILDFLAG(IS_NACL) && !BUILDFLAG(IS_AIX)
 
 #if BUILDFLAG(IS_CHROMEOS)
-void PlatformThread::InitThreadPostFieldTrial() {
+void PlatformThread::InitFeaturesPostFieldTrial() {
   DCHECK(FeatureList::GetInstance());
   if (!FeatureList::IsEnabled(kSchedUtilHints)) {
     g_use_sched_util.store(false);
@@ -435,8 +496,14 @@ void InitThreading() {}
 void TerminateOnThread() {}
 
 size_t GetDefaultThreadStackSize(const pthread_attr_t& attributes) {
-#if !defined(THREAD_SANITIZER)
+#if !defined(THREAD_SANITIZER) && defined(__GLIBC__)
+  // Generally glibc sets ample default stack sizes, so use the default there.
   return 0;
+#elif !defined(THREAD_SANITIZER)
+  // Other libcs (uclibc, musl, etc) tend to use smaller stacks, often too small
+  // for chromium. Make sure we have enough space to work with here. Note that
+  // for comparison glibc stacks are generally around 8MB.
+  return 2 * (1 << 20);
 #else
   // ThreadSanitizer bloats the stack heavily. Evidence has been that the
   // default stack size isn't enough for some browser tests.

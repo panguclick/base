@@ -23,10 +23,6 @@
 # crbug.com/1036571
 -org.chromium.chrome.browser.shape_detection.ShapeDetectionTest.testTextDetection
 
-# crbug.com/1036552
--org.chromium.chrome.browser.tasks.tab_management.TabGridDialogViewTest.testDialog_ZoomInFadeOut
--org.chromium.chrome.browser.tasks.tab_management.TabGridDialogViewTest.testDialog_ZoomInZoomOut
-
 # crbug.com/1036459
 -org.chromium.chrome.browser.ntp.NewTabPageTest.testFocusFakebox
 
@@ -41,9 +37,6 @@
 
 # crbug.com/1061178
 -org.chromium.chrome.browser.tasks.tab_management.TabGridDialogTest.testSwipeToDismiss_Dialog
-
-# crbug.com/1061198
--org.chromium.chrome.browser.password_manager.settings.PasswordSettingsTest.testExportMenuDisabled
 
 # crbug.com/1036556
 -org.chromium.chrome.browser.usage_stats.TabSuspensionTest.testMediaSuspension
@@ -95,9 +88,6 @@
 -org.chromium.chrome.browser.offlinepages.OfflinePageUtilsTest.testMhtmlLoadResultFromRendererWithNamespace
 -org.chromium.chrome.browser.offlinepages.OfflinePageUtilsTest.testSharePublicOfflinePage
 -org.chromium.chrome.browser.offlinepages.indicator.OfflineIndicatorControllerTest.testDoNotShowOfflineIndicatorOnOfflinePageWhenOffline
-
-# crbug.com/1179791
--org.chromium.chrome.browser.autofill_assistant.AutofillAssistantChromeTabIntegrationTest.interactingWithLocationBarHidesAutofillAssistant
 
 # crbug.com/1287572
 -org.chromium.chrome.browser.webapps.WebappLaunchCauseMetricsTest.testHomescreenLaunch

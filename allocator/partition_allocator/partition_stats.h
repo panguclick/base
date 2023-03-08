@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,12 +9,13 @@
 #include <cstdint>
 
 #include "base/allocator/partition_allocator/partition_alloc_base/component_export.h"
+#include "base/allocator/partition_allocator/partition_alloc_buildflags.h"
 #include "base/allocator/partition_allocator/partition_alloc_config.h"
 #include "base/allocator/partition_allocator/partition_alloc_constants.h"
 
 namespace partition_alloc {
 
-// Most of these are not populated if PA_ENABLE_THREAD_CACHE_STATISTICS is not
+// Most of these are not populated if PA_THREAD_CACHE_ENABLE_STATISTICS is not
 // defined.
 struct ThreadCacheStats {
   uint64_t alloc_count;   // Total allocation requests.
@@ -41,6 +42,20 @@ struct ThreadCacheStats {
 #endif  // defined(PA_THREAD_CACHE_ALLOC_STATS)
 };
 
+// Per-thread allocation statistics. Only covers allocations made through the
+// partition linked to the thread cache. As the allocator doesn't record
+// requested sizes in most cases, the data there will be an overestimate of the
+// actually requested sizes. It is also not expected to sum up to anything
+// meaningful across threads, due to the lack of synchronization. Figures there
+// are cumulative, not net. Since the data below is per-thread, note a thread
+// can deallocate more than it allocated.
+struct ThreadAllocStats {
+  uint64_t alloc_count;
+  uint64_t alloc_total_size;
+  uint64_t dealloc_count;
+  uint64_t dealloc_total_size;
+};
+
 // Struct used to retrieve total memory usage of a partition. Used by
 // PartitionStatsDumper implementation.
 struct PartitionMemoryStats {
@@ -54,11 +69,15 @@ struct PartitionMemoryStats {
   size_t total_active_count;  // Total count of active objects in the partition.
   size_t total_decommittable_bytes;  // Total bytes that could be decommitted.
   size_t total_discardable_bytes;    // Total bytes that could be discarded.
-#if BUILDFLAG(USE_BACKUP_REF_PTR)
+#if BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT)
   size_t
       total_brp_quarantined_bytes;  // Total bytes that are quarantined by BRP.
-  size_t total_brp_quarantined_count;  // Total number of slots that are
-                                       // quarantined by BRP.
+  size_t total_brp_quarantined_count;       // Total number of slots that are
+                                            // quarantined by BRP.
+  size_t cumulative_brp_quarantined_bytes;  // Cumulative bytes that are
+                                            // quarantined by BRP.
+  size_t cumulative_brp_quarantined_count;  // Cumulative number of slots that
+                                            // are quarantined by BRP.
 #endif
 
   bool has_thread_cache;
@@ -81,16 +100,16 @@ struct PartitionBucketMemoryStats {
   uint32_t allocated_slot_span_size;  // Total size the slot span allocated
                                       // from the system (committed pages).
   uint32_t active_bytes;              // Total active bytes used in the bucket.
-  uint32_t active_count;  // Total active objects allocated in the bucket.
-  uint32_t resident_bytes;            // Total bytes provisioned in the bucket.
-  uint32_t decommittable_bytes;       // Total bytes that could be decommitted.
-  uint32_t discardable_bytes;         // Total bytes that could be discarded.
-  uint32_t num_full_slot_spans;       // Number of slot spans with all slots
-                                      // allocated.
-  uint32_t num_active_slot_spans;     // Number of slot spans that have at least
-                                      // one provisioned slot.
-  uint32_t num_empty_slot_spans;      // Number of slot spans that are empty
-                                      // but not decommitted.
+  uint32_t active_count;    // Total active objects allocated in the bucket.
+  uint32_t resident_bytes;  // Total bytes provisioned in the bucket.
+  uint32_t decommittable_bytes;    // Total bytes that could be decommitted.
+  uint32_t discardable_bytes;      // Total bytes that could be discarded.
+  uint32_t num_full_slot_spans;    // Number of slot spans with all slots
+                                   // allocated.
+  uint32_t num_active_slot_spans;  // Number of slot spans that have at least
+                                   // one provisioned slot.
+  uint32_t num_empty_slot_spans;   // Number of slot spans that are empty
+                                   // but not decommitted.
   uint32_t num_decommitted_slot_spans;  // Number of slot spans that are empty
                                         // and decommitted.
 };
@@ -128,17 +147,5 @@ class PA_COMPONENT_EXPORT(PARTITION_ALLOC) SimplePartitionStatsDumper
 };
 
 }  // namespace partition_alloc
-
-namespace base {
-
-// TODO(https://crbug.com/1288247): Remove these 'using' declarations once
-// the migration to the new namespaces gets done.
-using ::partition_alloc::PartitionBucketMemoryStats;
-using ::partition_alloc::PartitionMemoryStats;
-using ::partition_alloc::PartitionStatsDumper;
-using ::partition_alloc::SimplePartitionStatsDumper;
-using ::partition_alloc::ThreadCacheStats;
-
-}  // namespace base
 
 #endif  // BASE_ALLOCATOR_PARTITION_ALLOCATOR_PARTITION_STATS_H_

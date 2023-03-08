@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -61,13 +61,13 @@ template <int BASE, typename CHAR>
 absl::optional<uint8_t> CharToDigit(CHAR c) {
   static_assert(1 <= BASE && BASE <= 36, "BASE needs to be in [1, 36]");
   if (c >= '0' && c < '0' + std::min(BASE, 10))
-    return c - '0';
+    return static_cast<uint8_t>(c - '0');
 
   if (c >= 'a' && c < 'a' + BASE - 10)
-    return c - 'a' + 10;
+    return static_cast<uint8_t>(c - 'a' + 10);
 
   if (c >= 'A' && c < 'A' + BASE - 10)
-    return c - 'A' + 10;
+    return static_cast<uint8_t>(c - 'A' + 10);
 
   return absl::nullopt;
 }
@@ -275,7 +275,7 @@ bool StringToDoubleImpl(STRING input, const CHAR* data, double& output) {
   //  - If the first character is a space, there was leading whitespace
   return !input.empty() && output != HUGE_VAL && output != -HUGE_VAL &&
          static_cast<size_t>(processed_characters_count) == input.size() &&
-         !IsUnicodeWhitespace(input[0]);
+         !IsWhitespace(input[0]);
 }
 
 template <typename Char, typename OutIter>

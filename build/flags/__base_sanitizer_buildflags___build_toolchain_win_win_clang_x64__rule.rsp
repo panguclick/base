@@ -1,0 +1,1 @@
+--flags IS_HWASAN=false USING_SANITIZER=false

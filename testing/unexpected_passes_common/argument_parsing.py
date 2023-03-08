@@ -1,15 +1,16 @@
-# Copyright 2021 The Chromium Authors. All rights reserved.
+# Copyright 2021 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 """Common argument parsing-related code for unexpected pass finders."""
 
+import argparse
 import logging
 import os
 
 from unexpected_passes_common import constants
 
 
-def AddCommonArguments(parser):
+def AddCommonArguments(parser: argparse.ArgumentParser) -> None:
   """Adds arguments that are common to all unexpected pass finders.
 
   Args:
@@ -36,11 +37,20 @@ def AddCommonArguments(parser):
                       default=False,
                       help='Automatically remove any expectations that are '
                       'determined to be stale from the expectation file.')
-  parser.add_argument('--modify-semi-stale-expectations',
-                      action='store_true',
-                      default=False,
-                      help='If any semi-stale expectations are found, prompt '
-                      'the user about the modification of each one.')
+  semi_stale_group = parser.add_mutually_exclusive_group()
+  semi_stale_group.add_argument(
+      '--modify-semi-stale-expectations',
+      action='store_true',
+      default=False,
+      help='If any semi-stale expectations are found, '
+      'prompt the user about the modification of '
+      'each one.')
+  semi_stale_group.add_argument('--narrow-semi-stale-expectation-scope',
+                                action='store_true',
+                                default=False,
+                                help='Automatically modify or split semi-stale '
+                                'expectations so they only apply to '
+                                'configurations that actually need them.')
   parser.add_argument('-v',
                       '--verbose',
                       action='count',
@@ -68,6 +78,19 @@ def AddCommonArguments(parser):
                             'from being removed before a sufficient amount of '
                             'data has been generated with the expectation '
                             'active. Set to a negative value to disable.'))
+  parser.add_argument('--result-output-file',
+                      help=('Output file to store the generated results. If '
+                            'not specified, will use a temporary file.'))
+  parser.add_argument('--bug-output-file',
+                      help=('Output file to store "Bug:"/"Fixed:" text '
+                            'intended for use in CL descriptions. If not '
+                            'specified, will be printed to the terminal '
+                            'instead.'))
+  parser.add_argument('--jobs',
+                      '-j',
+                      type=int,
+                      help=('How many parallel jobs to run. By default, runs '
+                            'all work in parallel.'))
   internal_group = parser.add_mutually_exclusive_group()
   internal_group.add_argument('--include-internal-builders',
                               action='store_true',
@@ -88,7 +111,7 @@ def AddCommonArguments(parser):
                                     'presence of src-internal.'))
 
 
-def PerformCommonPostParseSetup(args):
+def PerformCommonPostParseSetup(args: argparse.Namespace) -> None:
   """Helper function to perform all common post-parse setup.
 
   Args:
@@ -98,7 +121,7 @@ def PerformCommonPostParseSetup(args):
   SetInternalBuilderInclusion(args)
 
 
-def SetLoggingVerbosity(args):
+def SetLoggingVerbosity(args: argparse.Namespace) -> None:
   """Sets logging verbosity based on parsed arguments.
 
   Args:
@@ -118,7 +141,7 @@ def SetLoggingVerbosity(args):
   logging.getLogger().setLevel(level)
 
 
-def SetInternalBuilderInclusion(args):
+def SetInternalBuilderInclusion(args: argparse.Namespace) -> None:
   """Sets internal builder inclusion based on parsed arguments.
 
   Args:

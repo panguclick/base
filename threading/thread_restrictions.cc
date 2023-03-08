@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,15 +9,12 @@
 #include "build/build_config.h"
 
 #if DCHECK_IS_ON()
-
 #include <utility>
 
 #include "base/check_op.h"
 #include "base/debug/stack_trace.h"
 #include "base/no_destructor.h"
 #include "base/threading/thread_local.h"
-#include "base/trace_event/base_tracing.h"
-#include "build/build_config.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 
 // NaCL doesn't support stack sampling and Android is slow at stack sampling and
@@ -337,26 +334,6 @@ ScopedAllowBaseSyncPrimitivesOutsideBlockingScope::
 #if DCHECK_IS_ON()
   DCHECK(!*GetBaseSyncPrimitivesDisallowedTls());
   GetBaseSyncPrimitivesDisallowedTls().Set(std::move(was_disallowed_));
-#endif
-}
-
-ThreadRestrictions::ScopedAllowIO::ScopedAllowIO(const Location& from_here)
-#if DCHECK_IS_ON()
-    : was_disallowed_(GetBlockingDisallowedTls().Set(
-          std::make_unique<BooleanWithStack>(false)))
-#endif
-{
-  TRACE_EVENT_BEGIN("base", "ScopedAllowIO", [&](perfetto::EventContext ctx) {
-    ctx.event()->set_source_location_iid(
-        base::trace_event::InternedSourceLocation::Get(&ctx, from_here));
-  });
-}
-
-ThreadRestrictions::ScopedAllowIO::~ScopedAllowIO() {
-  TRACE_EVENT_END0("base", "ScopedAllowIO");
-
-#if DCHECK_IS_ON()
-  GetBlockingDisallowedTls().Set(std::move(was_disallowed_));
 #endif
 }
 

@@ -4,15 +4,22 @@ This document describes PartitionAlloc at a high level, with some architectural
 details. For implementation details, see the comments in
 `partition_alloc_constants.h`.
 
+## Quick Links
+
+* [Glossary](./glossary.md): Definitions of terms commonly used in
+  PartitionAlloc. The present document largely avoids defining terms.
+
+* [Build Config](./build_config.md): Pertinent GN args, buildflags, and
+  macros.
+
+* [Chrome-External Builds](./external_builds.md): Further considerations
+  for standalone PartitionAlloc, plus an embedder's guide for some extra
+  GN args.
+
 ## Overview
 
 PartitionAlloc is a memory allocator optimized for space efficiency,
 allocation latency, and security.
-
-*** note
-This document largely avoids defining terms; consult the
-[glossary](./glossary.md) for a complete reference.
-***
 
 ### Performance
 
@@ -20,6 +27,11 @@ PartitionAlloc is designed to be extremely fast in its fast paths. The fast
 paths of allocation and deallocation require very few (reasonably predictable)
 branches. The number of operations in the fast paths is minimal, leading to the
 possibility of inlining.
+
+![The central allocator manages slots and spans. It is locked on a
+  per-partition basis. Separately, the thread cache consumes slots
+  from the central allocator, allowing it to hand out memory
+  quickly to individual threads.](./dot/layers.png)
 
 However, even the fast path isn't the fastest, because it requires taking
 a per-partition lock. Although we optimized the lock, there was still room for
@@ -88,7 +100,10 @@ The first and the last partition page are permanently inaccessible and serve
 as guard pages, with the exception of one system page in the middle of the first
 partition page that holds metadata (32B struct per partition page).
 
-![anatomy of a super page](./dot/super-page.png)
+![A super page is shown full of slot spans. The slot spans are logically
+  strung together to form buckets. At both extremes of the super page
+  are guard pages. PartitionAlloc metadata is hidden inside the
+  guard pages at the "front."](./dot/super-page.png)
 
 * The slot span numbers provide a visual hint of their size (in partition
   pages).
@@ -102,6 +117,13 @@ partition page that holds metadata (32B struct per partition page).
       diagram).
 * Gray fill denotes guard pages (one partition page each at the head and tail
   of each super page).
+* In some configurations, PartitionAlloc stores more metadata than can
+  fit in the one system page at the front. These are the bitmaps for
+  StarScan and `MTECheckedPtr<T>`, and they are relegated to the head of
+  what would otherwise be usable space for slot spans. One, both, or
+  none of these bitmaps may be present, depending on build
+  configuration, runtime configuration, and type of allocation.
+  See [`SuperPagePayloadBegin()`][payload-start] for details.
 
 As allocation requests arrive, there is eventually a need to allocate a new slot
 span.
@@ -178,3 +200,4 @@ list.
 [PartitionPage]: https://source.chromium.org/chromium/chromium/src/+/main:base/allocator/partition_allocator/partition_page.h;l=314;drc=e5b03e85ea180d1d1ab0dec471c7fd5d1706a9e4
 [SlotSpanMetadata]: https://source.chromium.org/chromium/chromium/src/+/main:base/allocator/partition_allocator/partition_page.h;l=120;drc=e5b03e85ea180d1d1ab0dec471c7fd5d1706a9e4
 [SubsequentPageMetadata]: https://source.chromium.org/chromium/chromium/src/+/main:base/allocator/partition_allocator/partition_page.h;l=295;drc=e5b03e85ea180d1d1ab0dec471c7fd5d1706a9e4
+[payload-start]: https://source.chromium.org/chromium/chromium/src/+/35b2deed603dedd4abb37f204d516ed62aa2b85c:base/allocator/partition_allocator/partition_page.h;l=454

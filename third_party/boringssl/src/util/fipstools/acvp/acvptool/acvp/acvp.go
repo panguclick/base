@@ -23,7 +23,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"net/url"
@@ -91,7 +90,7 @@ func NewServer(prefix string, logFile string, derCertificates [][]byte, privateK
 				return conn, err
 			},
 		},
-		Timeout: 30 * time.Second,
+		Timeout: 120 * time.Second,
 	}
 
 	return &Server{client: client, prefix: prefix, totpFunc: totp, PrefixTokens: make(map[string]string)}
@@ -168,12 +167,12 @@ func parseReplyToBytes(in io.Reader) ([]byte, error) {
 		return nil, err
 	}
 
-	buf, err := ioutil.ReadAll(decoder.Buffered())
+	buf, err := io.ReadAll(decoder.Buffered())
 	if err != nil {
 		return nil, err
 	}
 
-	rest, err := ioutil.ReadAll(in)
+	rest, err := io.ReadAll(in)
 	if err != nil {
 		return nil, err
 	}

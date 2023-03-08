@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -94,11 +94,9 @@ class BASE_EXPORT SampleVectorBase : public HistogramSamples {
   size_t counts_size() const { return bucket_ranges_->bucket_count(); }
 
  private:
- //delete by kingkong
-  // friend class SampleVectorTest;
-  // FRIEND_TEST_ALL_PREFIXES(HistogramTest, CorruptSampleCounts);
-  // FRIEND_TEST_ALL_PREFIXES(SharedHistogramTest, CorruptSampleCounts);
-  //end
+  friend class SampleVectorTest;
+  FRIEND_TEST_ALL_PREFIXES(HistogramTest, CorruptSampleCounts);
+  FRIEND_TEST_ALL_PREFIXES(SharedHistogramTest, CorruptSampleCounts);
 
   // |counts_| is actually a pointer to a HistogramBase::AtomicCount array but
   // is held as an atomic pointer for concurrency reasons. When combined with
@@ -127,9 +125,7 @@ class BASE_EXPORT SampleVector : public SampleVectorBase {
   ~SampleVector() override;
 
  private:
- //delete by kingkong
-  // FRIEND_TEST_ALL_PREFIXES(SampleVectorTest, GetPeakBucketSize);
-  //end
+  FRIEND_TEST_ALL_PREFIXES(SampleVectorTest, GetPeakBucketSize);
 
   // HistogramSamples:
   std::string GetAsciiBody() const override;

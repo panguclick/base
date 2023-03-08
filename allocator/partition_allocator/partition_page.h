@@ -1,4 +1,4 @@
-// Copyright (c) 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,24 +10,31 @@
 #include <limits>
 #include <utility>
 
-#include "base/allocator/buildflags.h"
 #include "base/allocator/partition_allocator/address_pool_manager.h"
 #include "base/allocator/partition_allocator/address_pool_manager_types.h"
+#include "base/allocator/partition_allocator/freeslot_bitmap_constants.h"
 #include "base/allocator/partition_allocator/partition_address_space.h"
 #include "base/allocator/partition_allocator/partition_alloc_base/bits.h"
 #include "base/allocator/partition_allocator/partition_alloc_base/compiler_specific.h"
 #include "base/allocator/partition_allocator/partition_alloc_base/component_export.h"
+#include "base/allocator/partition_allocator/partition_alloc_base/debug/debugging_buildflags.h"
 #include "base/allocator/partition_allocator/partition_alloc_base/thread_annotations.h"
+#include "base/allocator/partition_allocator/partition_alloc_buildflags.h"
 #include "base/allocator/partition_allocator/partition_alloc_check.h"
+#include "base/allocator/partition_allocator/partition_alloc_config.h"
 #include "base/allocator/partition_allocator/partition_alloc_constants.h"
 #include "base/allocator/partition_allocator/partition_alloc_forward.h"
 #include "base/allocator/partition_allocator/partition_bucket.h"
 #include "base/allocator/partition_allocator/partition_freelist_entry.h"
 #include "base/allocator/partition_allocator/partition_tag_bitmap.h"
+#include "base/allocator/partition_allocator/partition_tag_types.h"
 #include "base/allocator/partition_allocator/reservation_offset_table.h"
-#include "base/allocator/partition_allocator/starscan/state_bitmap.h"
 #include "base/allocator/partition_allocator/tagging.h"
 #include "build/build_config.h"
+
+#if BUILDFLAG(STARSCAN)
+#include "base/allocator/partition_allocator/starscan/state_bitmap.h"
+#endif  // BUILDFLAG(STARSCAN)
 
 #if BUILDFLAG(PUT_REF_COUNT_IN_PREVIOUS_SLOT)
 #include "base/allocator/partition_allocator/partition_ref_count.h"
@@ -83,8 +90,10 @@ PA_ALWAYS_INLINE uintptr_t SuperPagesEndFromExtent(
          (extent->number_of_consecutive_super_pages * kSuperPageSize);
 }
 
+#if BUILDFLAG(STARSCAN)
 using AllocationStateMap =
     StateBitmap<kSuperPageSize, kSuperPageAlignment, kAlignment>;
+#endif  // BUILDFLAG(STARSCAN)
 
 // Metadata of the slot span.
 //
@@ -220,6 +229,10 @@ struct SlotSpanMetadata {
   PA_ALWAYS_INLINE void SetRawSize(size_t raw_size);
   PA_ALWAYS_INLINE size_t GetRawSize() const;
 
+  // Only meaningful when `this` refers to a slot span in a direct map
+  // bucket.
+  PA_ALWAYS_INLINE PartitionTag* DirectMapMTETag();
+
   PA_ALWAYS_INLINE PartitionFreelistEntry* get_freelist_head() const {
     return freelist_head;
   }
@@ -283,7 +296,13 @@ struct SlotSpanMetadata {
 
   // TODO(ajwong): Can this be made private?  https://crbug.com/787153
   PA_COMPONENT_EXPORT(PARTITION_ALLOC)
-  static SlotSpanMetadata* get_sentinel_slot_span();
+  static const SlotSpanMetadata* get_sentinel_slot_span();
+  // The sentinel is not supposed to be modified and hence we mark it as const
+  // under the hood. However, we often store it together with mutable metadata
+  // objects and need a non-const pointer.
+  // You can use this function for this case, but you need to ensure that the
+  // returned object will not be written to.
+  static SlotSpanMetadata* get_sentinel_slot_span_non_const();
 
   // Slot span state getters.
   PA_ALWAYS_INLINE bool is_active() const;
@@ -303,7 +322,7 @@ struct SlotSpanMetadata {
   //
   // Note, this declaration is kept in the header as opposed to an anonymous
   // namespace so the getter can be fully inlined.
-  static inline SlotSpanMetadata sentinel_slot_span_;
+  static const SlotSpanMetadata sentinel_slot_span_;
   // For the sentinel.
   constexpr SlotSpanMetadata() noexcept
       : marked_full(0),
@@ -333,6 +352,13 @@ struct SubsequentPageMetadata {
   //   the first one is used to store slot information, but the second one is
   //   available for extra information)
   size_t raw_size;
+
+  // Specific to when `this` is used in a direct map bucket. Since direct
+  // maps don't have as many tags as the typical normal bucket slot span,
+  // we can get away with just hiding the sole tag in here.
+  //
+  // See `//base/memory/mtecheckedptr.md` for details.
+  PartitionTag direct_map_tag;
 };
 
 // Each partition page has metadata associated with it. The metadata of the
@@ -406,6 +432,16 @@ PA_ALWAYS_INLINE PartitionPage<thread_safe>* PartitionSuperPageToMetadataArea(
                                                        SystemPageSize());
 }
 
+PA_ALWAYS_INLINE const SubsequentPageMetadata* GetSubsequentPageMetadata(
+    const PartitionPage<ThreadSafe>* page) {
+  return &(page + 1)->subsequent_page_metadata;
+}
+
+PA_ALWAYS_INLINE SubsequentPageMetadata* GetSubsequentPageMetadata(
+    PartitionPage<ThreadSafe>* page) {
+  return &(page + 1)->subsequent_page_metadata;
+}
+
 template <bool thread_safe>
 PA_ALWAYS_INLINE PartitionSuperPageExtentEntry<thread_safe>*
 PartitionSuperPageToExtent(uintptr_t super_page) {
@@ -413,6 +449,8 @@ PartitionSuperPageToExtent(uintptr_t super_page) {
   return reinterpret_cast<PartitionSuperPageExtentEntry<thread_safe>*>(
       PartitionSuperPageToMetadataArea<thread_safe>(super_page));
 }
+
+#if BUILDFLAG(STARSCAN)
 
 // Size that should be reserved for state bitmap (if present) inside a super
 // page. Elements of a super page are partition-page-aligned, hence the returned
@@ -434,13 +472,24 @@ CommittedStateBitmapSize() {
 PA_ALWAYS_INLINE uintptr_t SuperPageStateBitmapAddr(uintptr_t super_page) {
   PA_DCHECK(!(super_page % kSuperPageAlignment));
   return super_page + PartitionPageSize() +
-         (IsManagedByNormalBuckets(super_page) ? ReservedTagBitmapSize() : 0);
+         (IsManagedByNormalBuckets(super_page)
+              ? ReservedTagBitmapSize() + ReservedFreeSlotBitmapSize()
+              : 0);
 }
+
 PA_ALWAYS_INLINE AllocationStateMap* SuperPageStateBitmap(
     uintptr_t super_page) {
   return reinterpret_cast<AllocationStateMap*>(
       SuperPageStateBitmapAddr(super_page));
 }
+#else
+
+PAGE_ALLOCATOR_CONSTANTS_DECLARE_CONSTEXPR PA_ALWAYS_INLINE size_t
+ReservedStateBitmapSize() {
+  return 0ull;
+}
+
+#endif  // BUILDFLAG(STARSCAN)
 
 // Returns the address of the tag bitmap of the `super_page`. Caller must ensure
 // that bitmap exists.
@@ -450,17 +499,31 @@ PA_ALWAYS_INLINE uintptr_t SuperPageTagBitmapAddr(uintptr_t super_page) {
   return super_page + PartitionPageSize();
 }
 
+PA_ALWAYS_INLINE uintptr_t
+SuperPagePayloadStartOffset(bool is_managed_by_normal_buckets,
+                            bool with_quarantine) {
+  return PartitionPageSize() +
+         (is_managed_by_normal_buckets
+              ? (ReservedTagBitmapSize() + ReservedFreeSlotBitmapSize())
+              : 0) +
+         (with_quarantine ? ReservedStateBitmapSize() : 0);
+}
+
 PA_ALWAYS_INLINE uintptr_t SuperPagePayloadBegin(uintptr_t super_page,
                                                  bool with_quarantine) {
   PA_DCHECK(!(super_page % kSuperPageAlignment));
-  return super_page + PartitionPageSize() +
-         (IsManagedByNormalBuckets(super_page) ? ReservedTagBitmapSize() : 0) +
-         (with_quarantine ? ReservedStateBitmapSize() : 0);
+  return super_page +
+         SuperPagePayloadStartOffset(IsManagedByNormalBuckets(super_page),
+                                     with_quarantine);
+}
+
+PA_ALWAYS_INLINE uintptr_t SuperPagePayloadEndOffset() {
+  return kSuperPageSize - PartitionPageSize();
 }
 
 PA_ALWAYS_INLINE uintptr_t SuperPagePayloadEnd(uintptr_t super_page) {
   PA_DCHECK(!(super_page % kSuperPageAlignment));
-  return super_page + kSuperPageSize - PartitionPageSize();
+  return super_page + SuperPagePayloadEndOffset();
 }
 
 PA_ALWAYS_INLINE size_t SuperPagePayloadSize(uintptr_t super_page,
@@ -501,7 +564,6 @@ SlotSpanMetadata<thread_safe>::ToSuperPageExtent() const {
 // surely never contain user data.
 PA_ALWAYS_INLINE bool IsWithinSuperPagePayload(uintptr_t address,
                                                bool with_quarantine) {
-  address = ::partition_alloc::internal::UnmaskPtr(address);
   // Quarantine can only be enabled for normal buckets in the current code.
   PA_DCHECK(!with_quarantine || IsManagedByNormalBuckets(address));
   uintptr_t super_page = address & kSuperPageBaseMask;
@@ -580,7 +642,6 @@ PA_ALWAYS_INLINE uintptr_t SlotSpanMetadata<thread_safe>::ToSlotSpanStart(
 template <bool thread_safe>
 PA_ALWAYS_INLINE SlotSpanMetadata<thread_safe>*
 SlotSpanMetadata<thread_safe>::FromAddr(uintptr_t address) {
-  address = ::partition_alloc::internal::UnmaskPtr(address);
   auto* page = PartitionPage<thread_safe>::FromAddr(address);
   PA_DCHECK(page->is_valid);
   // Partition pages in the same slot span share the same SlotSpanMetadata
@@ -610,9 +671,7 @@ SlotSpanMetadata<thread_safe>::FromSlotStart(uintptr_t slot_start) {
 #if BUILDFLAG(PA_DCHECK_IS_ON)
   // Checks that the pointer is a multiple of slot size.
   uintptr_t slot_span_start = ToSlotSpanStart(slot_span);
-  PA_DCHECK(!((::partition_alloc::internal::UnmaskPtr(slot_start) -
-               ::partition_alloc::internal::UnmaskPtr(slot_span_start)) %
-              slot_span->bucket->slot_size));
+  PA_DCHECK(!((slot_start - slot_span_start) % slot_span->bucket->slot_size));
 #endif  // BUILDFLAG(PA_DCHECK_IS_ON)
   return slot_span;
 }
@@ -624,16 +683,14 @@ SlotSpanMetadata<thread_safe>::FromSlotStart(uintptr_t slot_start) {
 template <bool thread_safe>
 PA_ALWAYS_INLINE SlotSpanMetadata<thread_safe>*
 SlotSpanMetadata<thread_safe>::FromObject(void* object) {
-  uintptr_t object_addr = PartitionRoot<thread_safe>::ObjectPtr2Addr(object);
+  uintptr_t object_addr = ObjectPtr2Addr(object);
   auto* slot_span = FromAddr(object_addr);
 #if BUILDFLAG(PA_DCHECK_IS_ON)
   // Checks that the object is exactly |extras_offset| away from a multiple of
   // slot size (i.e. from a slot start).
   uintptr_t slot_span_start = ToSlotSpanStart(slot_span);
   auto* root = PartitionRoot<thread_safe>::FromSlotSpan(slot_span);
-  PA_DCHECK((::partition_alloc::internal::UnmaskPtr(object_addr) -
-             ::partition_alloc::internal::UnmaskPtr(slot_span_start)) %
-                slot_span->bucket->slot_size ==
+  PA_DCHECK((object_addr - slot_span_start) % slot_span->bucket->slot_size ==
             root->flags.extras_offset);
 #endif  // BUILDFLAG(PA_DCHECK_IS_ON)
   return slot_span;
@@ -664,32 +721,46 @@ SlotSpanMetadata<thread_safe>::FromObjectInnerAddr(uintptr_t address) {
 template <bool thread_safe>
 PA_ALWAYS_INLINE SlotSpanMetadata<thread_safe>*
 SlotSpanMetadata<thread_safe>::FromObjectInnerPtr(void* ptr) {
-  return FromObjectInnerAddr(
-      PartitionRoot<thread_safe>::ObjectInnerPtr2Addr(ptr));
+  return FromObjectInnerAddr(ObjectInnerPtr2Addr(ptr));
 }
 
 template <bool thread_safe>
 PA_ALWAYS_INLINE void SlotSpanMetadata<thread_safe>::SetRawSize(
     size_t raw_size) {
   PA_DCHECK(CanStoreRawSize());
-  auto* the_next_page = reinterpret_cast<PartitionPage<thread_safe>*>(this) + 1;
-  the_next_page->subsequent_page_metadata.raw_size = raw_size;
+  auto* subsequent_page_metadata = GetSubsequentPageMetadata(
+      reinterpret_cast<PartitionPage<thread_safe>*>(this));
+  subsequent_page_metadata->raw_size = raw_size;
 }
 
 template <bool thread_safe>
 PA_ALWAYS_INLINE size_t SlotSpanMetadata<thread_safe>::GetRawSize() const {
   PA_DCHECK(CanStoreRawSize());
-  auto* the_next_page =
-      reinterpret_cast<const PartitionPage<thread_safe>*>(this) + 1;
-  return the_next_page->subsequent_page_metadata.raw_size;
+  const auto* subsequent_page_metadata = GetSubsequentPageMetadata(
+      reinterpret_cast<const PartitionPage<thread_safe>*>(this));
+  return subsequent_page_metadata->raw_size;
+}
+
+template <bool thread_safe>
+PA_ALWAYS_INLINE PartitionTag*
+SlotSpanMetadata<thread_safe>::DirectMapMTETag() {
+  PA_DCHECK(bucket->is_direct_mapped());
+  auto* subsequent_page_metadata = GetSubsequentPageMetadata(
+      reinterpret_cast<PartitionPage<thread_safe>*>(this));
+  return &subsequent_page_metadata->direct_map_tag;
 }
 
 template <bool thread_safe>
 PA_ALWAYS_INLINE void SlotSpanMetadata<thread_safe>::SetFreelistHead(
     PartitionFreelistEntry* new_head) {
+#if BUILDFLAG(PA_DCHECK_IS_ON)
+  // |this| is in the metadata region, hence isn't MTE-tagged. Untag |new_head|
+  // as well.
+  uintptr_t new_head_untagged = UntagPtr(new_head);
   PA_DCHECK(!new_head ||
             (reinterpret_cast<uintptr_t>(this) & kSuperPageBaseMask) ==
-                (reinterpret_cast<uintptr_t>(new_head) & kSuperPageBaseMask));
+                (new_head_untagged & kSuperPageBaseMask));
+#endif
   freelist_head = new_head;
   // Inserted something new in the freelist, assume that it is not sorted
   // anymore.
@@ -719,7 +790,8 @@ PA_ALWAYS_INLINE void SlotSpanMetadata<thread_safe>::Free(uintptr_t slot_start)
   root->lock_.AssertAcquired();
 #endif
 
-  auto* entry = reinterpret_cast<internal::PartitionFreelistEntry*>(slot_start);
+  auto* entry = static_cast<internal::PartitionFreelistEntry*>(
+      SlotStartAddr2Ptr(slot_start));
   // Catches an immediate double free.
   PA_CHECK(entry != freelist_head);
   // Look for double free one level deeper in debug.
@@ -761,11 +833,10 @@ PA_ALWAYS_INLINE void SlotSpanMetadata<thread_safe>::AppendFreeList(
     size_t number_of_entries = 0;
     for (auto* entry = head; entry;
          entry = entry->GetNext(bucket->slot_size), ++number_of_entries) {
-      uintptr_t unmasked_entry = ::partition_alloc::internal::UnmaskPtr(
-          reinterpret_cast<uintptr_t>(entry));
+      uintptr_t untagged_entry = UntagPtr(entry);
       // Check that all entries belong to this slot span.
-      PA_DCHECK(ToSlotSpanStart(this) <= unmasked_entry);
-      PA_DCHECK(unmasked_entry <
+      PA_DCHECK(ToSlotSpanStart(this) <= untagged_entry);
+      PA_DCHECK(untagged_entry <
                 ToSlotSpanStart(this) + bucket->get_bytes_per_span());
     }
     PA_DCHECK(number_of_entries == number_of_freed);
@@ -845,6 +916,7 @@ PA_ALWAYS_INLINE void SlotSpanMetadata<thread_safe>::Reset() {
   next_slot_span = nullptr;
 }
 
+#if BUILDFLAG(STARSCAN)
 // Returns the state bitmap from an address within a normal-bucket super page.
 // It's the caller's responsibility to ensure that the bitmap exists.
 PA_ALWAYS_INLINE AllocationStateMap* StateBitmapFromAddr(uintptr_t address) {
@@ -852,6 +924,7 @@ PA_ALWAYS_INLINE AllocationStateMap* StateBitmapFromAddr(uintptr_t address) {
   uintptr_t super_page = address & kSuperPageBaseMask;
   return SuperPageStateBitmap(super_page);
 }
+#endif  // BUILDFLAG(STARSCAN)
 
 // Iterates over all slot spans in a super-page. |Callback| must return true if
 // early return is needed.
@@ -900,24 +973,5 @@ void IterateSlotSpans(uintptr_t super_page,
 }
 
 }  // namespace partition_alloc::internal
-
-namespace base::internal {
-
-// TODO(https://crbug.com/1288247): Remove these 'using' declarations once
-// the migration to the new namespaces gets done.
-using ::partition_alloc::internal::AllocationStateMap;
-using ::partition_alloc::internal::CommittedStateBitmapSize;
-using ::partition_alloc::internal::IterateSlotSpans;
-using ::partition_alloc::internal::PartitionPage;
-using ::partition_alloc::internal::PartitionSuperPageExtentEntry;
-using ::partition_alloc::internal::PartitionSuperPageToExtent;
-using ::partition_alloc::internal::PartitionSuperPageToMetadataArea;
-using ::partition_alloc::internal::ReservedStateBitmapSize;
-using ::partition_alloc::internal::SlotSpanMetadata;
-using ::partition_alloc::internal::StateBitmapFromAddr;
-using ::partition_alloc::internal::SuperPageStateBitmap;
-using ::partition_alloc::internal::SuperPageStateBitmapAddr;
-
-}  // namespace base::internal
 
 #endif  // BASE_ALLOCATOR_PARTITION_ALLOCATOR_PARTITION_PAGE_H_
