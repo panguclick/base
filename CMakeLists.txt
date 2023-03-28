@@ -77,7 +77,6 @@ endif()
 
 set(sources)
 set(BASE_PLATFORM_DEFINITIONS)
-set(BASE_LINK_PLATFORM_LIBRARIES)
 set(BASE_INCLUDE_PLATFORM_DIRECTORIES)
 
 set(BASE_INCLUDE_DIRECTORIES
@@ -85,9 +84,6 @@ set(BASE_INCLUDE_DIRECTORIES
     ..
     ./third_party/abseil-cpp
     ./third_party/boringssl/src/include
-)
-
-set(BASE_LINK_DIRECTORIES
 )
 
 set(BASE_DEFINITIONS
@@ -1460,9 +1456,6 @@ if(is_win)
     )
 endif()
 
-set(BASE_LINK_LIBRARIES
-)
-
 include_directories(
     ${BASE_INCLUDE_DIRECTORIES}
     ${BASE_INCLUDE_PLATFORM_DIRECTORIES}
@@ -1470,10 +1463,6 @@ include_directories(
 
 add_definitions(
     ${BASE_DEFINITIONS}
-)
-
-link_directories(
-    ${BASE_LINK_DIRECTORIES}
 )
 
 add_library(
